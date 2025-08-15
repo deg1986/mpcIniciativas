@@ -1,9 +1,9 @@
-# 🚀 Servidor MCP para Iniciativas con Bot de Telegram - VERSIÓN SIMPLIFICADA
+# 🚀 MCP Server con Bot Robusto para Render
 import os
 import json
-import time
 import threading
 import asyncio
+import time
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -12,15 +12,16 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import logging
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
+# Configuración de logging más detallada
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
+# Flask app
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'initiatives-secret-key')
-
-# CORS
-CORS(app, origins=["*"], methods=["GET", "POST", "OPTIONS"], allow_headers=["*"])
+CORS(app)
 
 # Configuración
 NOCODB_BASE_URL = "https://nocodb.farmuhub.co/api/v2"
@@ -29,63 +30,35 @@ NOCODB_TOKEN = "-kgNP5Q5G54nlDXPei7IO9PMMyE4pIgxYCi6o17Y"
 TELEGRAM_TOKEN = "8309791895:AAGxfmPQ_yvgNY-kyMMDrKR0srb7c20KL5Q"
 
 # Variables globales
-initiatives_cache = None
-cache_time = None
-telegram_app = None
 bot_running = False
-user_creation_state = {}
+bot_start_time = None
+bot_error_count = 0
+user_states = {}
+telegram_app = None
 
-def get_nocodb_initiatives():
-    """Obtener datos de iniciativas desde NocoDB"""
-    global initiatives_cache, cache_time
-    
-    # Cache por 5 minutos
-    if initiatives_cache and cache_time and (time.time() - cache_time) < 300:
-        return initiatives_cache
-    
+def get_initiatives():
+    """Obtener iniciativas de NocoDB"""
     try:
         url = f"{NOCODB_BASE_URL}/tables/{NOCODB_TABLE_ID}/records"
         headers = {'accept': 'application/json', 'xc-token': NOCODB_TOKEN}
-        params = {'limit': 100, 'shuffle': 0, 'offset': 0}
+        params = {'limit': 50}
         
-        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response = requests.get(url, headers=headers, params=params, timeout=20)
         
-        if response.status_code != 200:
-            return {"success": False, "error": f"HTTP {response.status_code}", "data": []}
-        
-        raw_data = response.json()
-        initiatives = raw_data.get('list', [])
-        
-        # Procesar datos
-        processed_initiatives = []
-        for initiative in initiatives:
-            if isinstance(initiative, dict):
-                processed_init = {}
-                for key, value in initiative.items():
-                    clean_key = str(key).strip().replace(' ', '_').replace('-', '_').lower()
-                    processed_init[clean_key] = str(value) if value is not None else ""
-                processed_initiatives.append(processed_init)
-        
-        result = {
-            "success": True,
-            "data": processed_initiatives,
-            "metadata": {
-                "total_records": len(processed_initiatives),
-                "retrieved_at": datetime.now().isoformat()
-            }
-        }
-        
-        # Actualizar cache
-        initiatives_cache = result
-        cache_time = time.time()
-        return result
-        
+        if response.status_code == 200:
+            data = response.json()
+            initiatives = data.get('list', [])
+            logger.info(f"✅ Retrieved {len(initiatives)} initiatives from NocoDB")
+            return {"success": True, "data": initiatives}
+        else:
+            logger.error(f"❌ NocoDB HTTP {response.status_code}: {response.text[:200]}")
+            return {"success": False, "error": f"HTTP {response.status_code}"}
     except Exception as e:
-        logger.error(f"Error fetching initiatives: {e}")
-        return {"success": False, "error": str(e), "data": []}
+        logger.error(f"❌ Error fetching initiatives: {e}")
+        return {"success": False, "error": str(e)}
 
-def create_nocodb_initiative(initiative_data):
-    """Crear nueva iniciativa en NocoDB"""
+def create_initiative(data):
+    """Crear iniciativa en NocoDB"""
     try:
         url = f"{NOCODB_BASE_URL}/tables/{NOCODB_TABLE_ID}/records"
         headers = {
@@ -94,482 +67,488 @@ def create_nocodb_initiative(initiative_data):
             'Content-Type': 'application/json'
         }
         
-        # Validar campos requeridos
-        required_fields = ['initiative_name', 'description', 'main_kpi', 'portal', 'owner', 'team']
-        for field in required_fields:
-            if field not in initiative_data or not initiative_data[field]:
-                return {"success": False, "error": f"Campo requerido: {field}"}
-        
-        # Asegurar campos numéricos
-        numeric_fields = ['reach', 'impact', 'confidence', 'effort']
-        for field in numeric_fields:
-            if field in initiative_data:
-                try:
-                    initiative_data[field] = float(initiative_data[field])
-                except:
-                    initiative_data[field] = 0.0
-        
-        response = requests.post(url, headers=headers, json=initiative_data, timeout=30)
+        response = requests.post(url, headers=headers, json=data, timeout=20)
         
         if response.status_code in [200, 201]:
-            global initiatives_cache, cache_time
-            initiatives_cache = None
-            cache_time = None
-            
-            return {
-                "success": True,
-                "data": response.json(),
-                "message": f"Iniciativa '{initiative_data['initiative_name']}' creada"
-            }
+            logger.info(f"✅ Created initiative: {data.get('initiative_name', 'Unknown')}")
+            return {"success": True, "data": response.json()}
         else:
+            logger.error(f"❌ Create failed HTTP {response.status_code}: {response.text[:200]}")
             return {"success": False, "error": f"HTTP {response.status_code}"}
-            
     except Exception as e:
-        logger.error(f"Error creating initiative: {e}")
+        logger.error(f"❌ Error creating initiative: {e}")
         return {"success": False, "error": str(e)}
 
 # ===== ENDPOINTS FLASK =====
 
-@app.route("/", methods=["GET", "POST", "OPTIONS"])
-def mcp_endpoint():
-    """Endpoint principal MCP"""
-    
-    if request.method == "OPTIONS":
-        response = jsonify({})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "*")
-        response.headers.add("Access-Control-Allow-Methods", "*")
-        return response
-    
-    if request.method == "GET":
-        return jsonify({
-            "name": "Initiatives MCP Server",
-            "version": "1.0.0",
-            "description": "MCP server for NocoDB initiatives with Telegram bot",
-            "status": "running",
-            "telegram_bot": {
-                "enabled": bool(TELEGRAM_TOKEN),
-                "running": bot_running
-            }
-        })
-    
-    if request.method == "POST":
-        try:
-            if not request.is_json:
-                return jsonify({
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32700, "message": "Content must be JSON"},
-                    "id": None
-                }), 400
-            
-            rpc_request = request.get_json()
-            if not rpc_request or 'method' not in rpc_request:
-                return jsonify({
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32600, "message": "Invalid request"},
-                    "id": rpc_request.get('id') if rpc_request else None
-                }), 400
-            
-            return handle_mcp_request(rpc_request)
-            
-        except Exception as e:
-            logger.error(f"MCP endpoint error: {e}")
-            return jsonify({
-                "jsonrpc": "2.0",
-                "error": {"code": -32603, "message": f"Internal error: {str(e)}"},
-                "id": None
-            }), 500
-
-def handle_mcp_request(rpc_request):
-    """Manejar peticiones MCP"""
-    method = rpc_request.get('method')
-    params = rpc_request.get('params', {})
-    request_id = rpc_request.get('id')
-    
-    if method == "initialize":
-        return jsonify({
-            "jsonrpc": "2.0",
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "resources": {"subscribe": False, "listChanged": False},
-                    "tools": {"listChanged": False}
-                },
-                "serverInfo": {"name": "initiatives-server", "version": "1.0.0"}
-            },
-            "id": request_id
-        })
-    
-    elif method == "initialized":
-        return jsonify({"jsonrpc": "2.0", "result": {}, "id": request_id})
-    
-    elif method == "tools/list":
-        return jsonify({
-            "jsonrpc": "2.0",
-            "result": {
-                "tools": [
-                    {
-                        "name": "list_initiatives",
-                        "description": "List all initiatives from NocoDB",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "limit": {"type": "integer", "default": 25, "minimum": 1, "maximum": 100}
-                            }
-                        }
-                    },
-                    {
-                        "name": "create_initiative",
-                        "description": "Create new initiative in NocoDB",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "initiative_name": {"type": "string"},
-                                "description": {"type": "string"},
-                                "main_kpi": {"type": "string"},
-                                "portal": {"type": "string"},
-                                "owner": {"type": "string"},
-                                "team": {"type": "string"},
-                                "reach": {"type": "number", "minimum": 0, "maximum": 1},
-                                "impact": {"type": "number", "minimum": 0, "maximum": 1},
-                                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                                "effort": {"type": "number", "minimum": 0, "maximum": 1}
-                            },
-                            "required": ["initiative_name", "description", "main_kpi", "portal", "owner", "team"]
-                        }
-                    }
-                ]
-            },
-            "id": request_id
-        })
-    
-    elif method == "tools/call":
-        tool_name = params.get("name")
-        args = params.get("arguments", {})
-        
-        if tool_name == "list_initiatives":
-            return handle_list_initiatives(args, request_id)
-        elif tool_name == "create_initiative":
-            return handle_create_initiative(args, request_id)
-        else:
-            return jsonify({
-                "jsonrpc": "2.0",
-                "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
-                "id": request_id
-            })
-    
-    else:
-        return jsonify({
-            "jsonrpc": "2.0",
-            "error": {"code": -32601, "message": f"Method not found: {method}"},
-            "id": request_id
-        })
-
-def handle_list_initiatives(args, request_id):
-    """Manejar listado de iniciativas"""
-    data = get_nocodb_initiatives()
-    
-    if not data.get("success"):
-        return jsonify({
-            "jsonrpc": "2.0",
-            "result": {
-                "content": [{
-                    "type": "text",
-                    "text": f"❌ Error: {data.get('error', 'Unknown error')}"
-                }]
-            },
-            "id": request_id
-        })
-    
-    initiatives = data.get("data", [])
-    limit = min(int(args.get("limit", 25)), 100)
-    limited_initiatives = initiatives[:limit]
-    
-    result_text = f"🎯 **Lista de Iniciativas**\n\n**Total:** {len(initiatives)}\n**Mostrando:** {len(limited_initiatives)}\n\n"
-    
-    if limited_initiatives:
-        for i, initiative in enumerate(limited_initiatives, 1):
-            if isinstance(initiative, dict):
-                name = initiative.get('initiative_name', 'Sin nombre')
-                owner = initiative.get('owner', 'Sin dueño')
-                team = initiative.get('team', 'Sin equipo')
-                result_text += f"**{i}. {name}**\n👤 {owner} • 👥 {team}\n\n"
-    else:
-        result_text += "*No se encontraron iniciativas.*\n"
-    
+@app.route('/')
+def home():
+    """Endpoint principal"""
     return jsonify({
-        "jsonrpc": "2.0",
-        "result": {
-            "content": [{
-                "type": "text",
-                "text": result_text
-            }]
-        },
-        "id": request_id
+        "name": "Initiatives MCP Server",
+        "version": "1.0.0",
+        "status": "running",
+        "timestamp": datetime.now().isoformat(),
+        "telegram_bot": {
+            "enabled": bool(TELEGRAM_TOKEN),
+            "running": bot_running,
+            "start_time": bot_start_time,
+            "error_count": bot_error_count
+        }
     })
 
-def handle_create_initiative(args, request_id):
-    """Manejar creación de iniciativa"""
-    result = create_nocodb_initiative(args)
-    
-    if result.get("success"):
-        result_text = f"✅ **Iniciativa Creada**\n\n**Nombre:** {args.get('initiative_name')}\n**Owner:** {args.get('owner')}\n**Equipo:** {args.get('team')}"
-    else:
-        result_text = f"❌ **Error:** {result.get('error', 'Unknown error')}"
+@app.route('/health')
+def health():
+    """Health check detallado"""
+    nocodb_test = get_initiatives()
     
     return jsonify({
-        "jsonrpc": "2.0",
-        "result": {
-            "content": [{
-                "type": "text",
-                "text": result_text
-            }]
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "services": {
+            "flask": "running",
+            "nocodb": "ok" if nocodb_test.get('success') else "error",
+            "telegram_bot": "running" if bot_running else "stopped"
         },
-        "id": request_id
+        "bot_info": {
+            "running": bot_running,
+            "start_time": bot_start_time,
+            "error_count": bot_error_count,
+            "active_sessions": len(user_states)
+        },
+        "nocodb_info": {
+            "connection": "ok" if nocodb_test.get('success') else "failed",
+            "initiatives_count": len(nocodb_test.get('data', [])) if nocodb_test.get('success') else 0,
+            "error": nocodb_test.get('error') if not nocodb_test.get('success') else None
+        }
     })
 
-# ===== BOT DE TELEGRAM =====
+@app.route('/start-bot', methods=['POST'])
+def start_bot_endpoint():
+    """Endpoint para iniciar/reiniciar el bot"""
+    global bot_running, bot_error_count
+    
+    if bot_running:
+        return jsonify({
+            "message": "Bot already running",
+            "bot_running": True,
+            "start_time": bot_start_time
+        })
+    
+    try:
+        success = start_bot_thread()
+        return jsonify({
+            "message": "Bot start attempted",
+            "success": success,
+            "bot_running": bot_running,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"❌ Error starting bot via endpoint: {e}")
+        return jsonify({
+            "message": "Failed to start bot",
+            "error": str(e),
+            "bot_running": False
+        }), 500
+
+@app.route('/test')
+def test():
+    """Test completo del sistema"""
+    nocodb_test = get_initiatives()
+    
+    return jsonify({
+        "test": "OK",
+        "timestamp": datetime.now().isoformat(),
+        "nocodb": {
+            "connection": "OK" if nocodb_test.get('success') else "FAILED",
+            "initiatives_count": len(nocodb_test.get('data', [])) if nocodb_test.get('success') else 0,
+            "error": nocodb_test.get('error') if not nocodb_test.get('success') else None
+        },
+        "telegram": {
+            "token_configured": bool(TELEGRAM_TOKEN),
+            "bot_running": bot_running,
+            "start_time": bot_start_time,
+            "error_count": bot_error_count
+        }
+    })
+
+@app.route('/api/initiatives')
+def api_initiatives():
+    """API para obtener iniciativas"""
+    data = get_initiatives()
+    return jsonify(data)
+
+@app.route('/api/create', methods=['POST'])
+def api_create():
+    """API para crear iniciativa"""
+    if not request.json:
+        return jsonify({"error": "JSON required"}), 400
+    
+    result = create_initiative(request.json)
+    return jsonify(result)
+
+# ===== BOT DE TELEGRAM ROBUSTO =====
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /start"""
-    welcome_text = """🎯 **Bot de Iniciativas Farmuhub**
+    logger.info(f"📱 /start command from user {update.effective_user.id}")
+    
+    text = """🎯 **Bot de Iniciativas Farmuhub**
 
 ¡Hola! Soy tu asistente para gestionar iniciativas.
 
-**Comandos:**
-/iniciativas - Ver iniciativas
-/crear - Crear iniciativa
-/help - Ayuda
+**Comandos disponibles:**
+/iniciativas - Ver lista de iniciativas
+/crear - Crear nueva iniciativa
+/help - Ver esta ayuda
 
 ¿En qué puedo ayudarte?"""
     
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    try:
+        await update.message.reply_text(text, parse_mode='Markdown')
+        logger.info("✅ Start message sent successfully")
+    except Exception as e:
+        logger.error(f"❌ Error sending start message: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /help"""
-    help_text = """🆘 **Ayuda**
+    logger.info(f"📱 /help command from user {update.effective_user.id}")
+    
+    text = """🆘 **Ayuda - Bot de Iniciativas**
 
 **Comandos disponibles:**
-🎯 /iniciativas - Listar iniciativas
-📝 /crear - Crear nueva iniciativa
-🆘 /help - Esta ayuda
+• **/iniciativas** - Lista todas las iniciativas
+• **/crear** - Proceso paso a paso para crear nueva iniciativa  
+• **/help** - Mostrar esta ayuda
 
-**Ejemplos:**
-• /iniciativas - Ve todas las iniciativas
-• /crear - Proceso paso a paso para crear"""
+**Cómo usar:**
+1. Escribe `/iniciativas` para ver todas las iniciativas
+2. Escribe `/crear` para empezar a crear una nueva
+3. Sigue las instrucciones paso a paso
+
+**Soporte:** Si hay algún problema, contacta al administrador."""
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    try:
+        await update.message.reply_text(text, parse_mode='Markdown')
+        logger.info("✅ Help message sent successfully")
+    except Exception as e:
+        logger.error(f"❌ Error sending help message: {e}")
 
 async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /iniciativas"""
+    logger.info(f"📱 /iniciativas command from user {update.effective_user.id}")
+    
     try:
-        data = get_nocodb_initiatives()
+        await update.message.reply_text("🔄 Obteniendo iniciativas...")
+        
+        data = get_initiatives()
         
         if not data.get("success"):
-            await update.message.reply_text(f"❌ Error: {data.get('error')}")
+            error_msg = f"❌ **Error al obtener iniciativas**\n\nError: {data.get('error', 'Desconocido')}"
+            await update.message.reply_text(error_msg, parse_mode='Markdown')
             return
         
-        initiatives = data.get("data", [])[:10]
+        initiatives = data.get("data", [])[:8]  # Máximo 8 para Telegram
         
         if not initiatives:
-            await update.message.reply_text("📭 No hay iniciativas.")
+            await update.message.reply_text("📭 No hay iniciativas disponibles en este momento.")
             return
         
-        response_text = f"🎯 **Iniciativas ({len(initiatives)})**\n\n"
+        text = f"🎯 **Lista de Iniciativas ({len(initiatives)})**\n\n"
         
-        for i, initiative in enumerate(initiatives, 1):
-            if isinstance(initiative, dict):
-                name = initiative.get('initiative_name', 'Sin nombre')
-                owner = initiative.get('owner', 'Sin dueño')
-                team = initiative.get('team', 'Sin equipo')
-                
-                response_text += f"**{i}. {name}**\n👤 {owner} • 👥 {team}\n\n"
+        for i, init in enumerate(initiatives, 1):
+            name = init.get('initiative_name', 'Sin nombre')
+            owner = init.get('owner', 'Sin owner')
+            team = init.get('team', 'Sin equipo')
+            
+            text += f"**{i}. {name}**\n"
+            text += f"👤 {owner} • 👥 {team}\n\n"
         
-        await update.message.reply_text(response_text, parse_mode='Markdown')
+        text += f"📋 *Mostrando las primeras {len(initiatives)} iniciativas*"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
+        logger.info(f"✅ Listed {len(initiatives)} initiatives successfully")
         
     except Exception as e:
-        logger.error(f"Error in list_initiatives: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
+        logger.error(f"❌ Error in list_initiatives_command: {e}")
+        await update.message.reply_text("❌ Error al obtener la lista de iniciativas. Intenta de nuevo.")
 
-async def create_initiative_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /crear"""
     user_id = update.effective_user.id
+    logger.info(f"📱 /crear command from user {user_id}")
     
-    user_creation_state[user_id] = {'step': 'name', 'data': {}}
+    user_states[user_id] = {'step': 'name', 'data': {}}
     
-    await update.message.reply_text(
-        "🆕 **Crear Iniciativa**\n\n**Paso 1/6:** ¿Nombre de la iniciativa?"
-    )
+    text = """🆕 **Crear Nueva Iniciativa**
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manejar mensajes de texto"""
+Te guiaré paso a paso para crear la iniciativa.
+
+**Paso 1 de 6:** ¿Cuál es el nombre de la iniciativa?
+
+*Escribe el nombre y presiona enviar*"""
+    
+    try:
+        await update.message.reply_text(text, parse_mode='Markdown')
+        logger.info(f"✅ Started creation process for user {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Error starting creation process: {e}")
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manejar mensajes de texto para la creación de iniciativas"""
     user_id = update.effective_user.id
     
-    if user_id not in user_creation_state:
-        await update.message.reply_text("👋 Usa /help para ver comandos.")
+    if user_id not in user_states:
+        text = """👋 **¡Hola!** 
+
+Usa los siguientes comandos:
+• `/help` - Ver ayuda completa
+• `/iniciativas` - Ver lista
+• `/crear` - Crear nueva iniciativa"""
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
         return
     
-    state = user_creation_state[user_id]
+    state = user_states[user_id]
     step = state['step']
     text = update.message.text.strip()
+    
+    logger.info(f"📝 Processing step '{step}' for user {user_id}")
     
     try:
         if step == 'name':
             state['data']['initiative_name'] = text
             state['step'] = 'description'
-            await update.message.reply_text(f"✅ Nombre: {text}\n\n**Paso 2/6:** Descripción:")
-        
+            response = f"✅ **Nombre guardado:** {text}\n\n**Paso 2 de 6:** ¿Cuál es la descripción de la iniciativa?"
+            
         elif step == 'description':
             state['data']['description'] = text
             state['step'] = 'kpi'
-            await update.message.reply_text("✅ Descripción ok\n\n**Paso 3/6:** KPI principal:")
-        
+            response = "✅ **Descripción guardada**\n\n**Paso 3 de 6:** ¿Cuál es el KPI principal?\n\n*Ejemplos: Productividad, Ventas, Satisfacción del Cliente*"
+            
         elif step == 'kpi':
             state['data']['main_kpi'] = text
             state['step'] = 'portal'
-            await update.message.reply_text(f"✅ KPI: {text}\n\n**Paso 4/6:** Portal:")
-        
+            response = f"✅ **KPI guardado:** {text}\n\n**Paso 4 de 6:** ¿En qué portal se ejecutará?\n\n*Ejemplos: Admin, Customer, Partner*"
+            
         elif step == 'portal':
             state['data']['portal'] = text
             state['step'] = 'owner'
-            await update.message.reply_text(f"✅ Portal: {text}\n\n**Paso 5/6:** Owner:")
-        
+            response = f"✅ **Portal guardado:** {text}\n\n**Paso 5 de 6:** ¿Quién es el owner/responsable de la iniciativa?"
+            
         elif step == 'owner':
             state['data']['owner'] = text
             state['step'] = 'team'
-            await update.message.reply_text(f"✅ Owner: {text}\n\n**Paso 6/6:** Equipo:")
-        
+            response = f"✅ **Owner guardado:** {text}\n\n**Paso 6 de 6:** ¿Qué equipo será responsable?\n\n*Ejemplos: Product, Engineering, Marketing*"
+            
         elif step == 'team':
             state['data']['team'] = text
-            await create_initiative_final(update, user_id)
-    
+            await finish_creation(update, user_id)
+            return
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+        
     except Exception as e:
-        logger.error(f"Error in handle_message: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        if user_id in user_creation_state:
-            del user_creation_state[user_id]
+        logger.error(f"❌ Error handling text for user {user_id}: {e}")
+        await update.message.reply_text("❌ Error procesando tu respuesta. Intenta de nuevo.")
+        if user_id in user_states:
+            del user_states[user_id]
 
-async def create_initiative_final(update: Update, user_id: int):
-    """Crear iniciativa final"""
+async def finish_creation(update: Update, user_id: int):
+    """Finalizar la creación de la iniciativa"""
     try:
-        state = user_creation_state[user_id]
+        state = user_states[user_id]
         data = state['data']
         
-        # Valores por defecto
-        data.update({'reach': 0.5, 'impact': 0.5, 'confidence': 0.5, 'effort': 0.5})
+        logger.info(f"🎯 Finishing creation for user {user_id}: {data.get('initiative_name')}")
         
-        await update.message.reply_text("⏳ Creando iniciativa...")
+        # Agregar valores por defecto para métricas
+        data.update({
+            'reach': 0.5,
+            'impact': 0.5, 
+            'confidence': 0.5,
+            'effort': 0.5
+        })
         
-        result = create_nocodb_initiative(data)
+        # Mostrar resumen
+        summary = f"""📋 **Resumen de la Iniciativa:**
+
+**Nombre:** {data['initiative_name']}
+**Descripción:** {data['description']}
+**KPI:** {data['main_kpi']}
+**Portal:** {data['portal']}
+**Owner:** {data['owner']}
+**Equipo:** {data['team']}
+
+⏳ **Creando iniciativa...**"""
+        
+        await update.message.reply_text(summary, parse_mode='Markdown')
+        
+        # Crear la iniciativa
+        result = create_initiative(data)
         
         if result.get("success"):
-            await update.message.reply_text(
-                f"🎉 **¡Iniciativa creada!**\n\n**{data['initiative_name']}** agregada al sistema."
-            )
+            success_text = f"""🎉 **¡Iniciativa creada exitosamente!**
+
+**{data['initiative_name']}** ha sido agregada al sistema.
+
+Usa `/iniciativas` para ver todas las iniciativas."""
+            
+            await update.message.reply_text(success_text, parse_mode='Markdown')
+            logger.info(f"✅ Successfully created initiative for user {user_id}")
         else:
-            await update.message.reply_text(f"❌ Error: {result.get('error')}")
+            error_text = f"""❌ **Error al crear la iniciativa**
+
+**Error:** {result.get('error', 'Error desconocido')}
+
+Intenta de nuevo con `/crear`"""
+            
+            await update.message.reply_text(error_text, parse_mode='Markdown')
+            logger.error(f"❌ Failed to create initiative for user {user_id}: {result.get('error')}")
         
-        if user_id in user_creation_state:
-            del user_creation_state[user_id]
+        # Limpiar estado del usuario
+        if user_id in user_states:
+            del user_states[user_id]
     
     except Exception as e:
-        logger.error(f"Error creating initiative: {e}")
-        await update.message.reply_text(f"❌ Error: {str(e)}")
-        if user_id in user_creation_state:
-            del user_creation_state[user_id]
+        logger.error(f"❌ Error finishing creation for user {user_id}: {e}")
+        error_text = f"❌ **Error al crear la iniciativa**\n\nError técnico: {str(e)}\n\nIntenta de nuevo con `/crear`"
+        await update.message.reply_text(error_text, parse_mode='Markdown')
+        if user_id in user_states:
+            del user_states[user_id]
 
-async def setup_telegram_bot():
-    """Configurar bot de Telegram"""
-    global telegram_app, bot_running
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log the error and send a telegram message to notify the developer."""
+    logger.error(f"Exception while handling an update: {context.error}")
+
+async def run_bot():
+    """Ejecutar bot de Telegram con manejo robusto de errores"""
+    global bot_running, bot_start_time, bot_error_count, telegram_app
     
-    try:
-        logger.info("🤖 Initializing Telegram bot...")
-        
-        telegram_app = (Application.builder()
-                       .token(TELEGRAM_TOKEN)
-                       .build())
-        
-        # Handlers
-        telegram_app.add_handler(CommandHandler("start", start_command))
-        telegram_app.add_handler(CommandHandler("help", help_command))
-        telegram_app.add_handler(CommandHandler("iniciativas", list_initiatives_command))
-        telegram_app.add_handler(CommandHandler("crear", create_initiative_command))
-        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        logger.info("🤖 Starting bot polling...")
-        bot_running = True
-        
-        await telegram_app.run_polling(drop_pending_updates=True)
-        
-    except Exception as e:
-        logger.error(f"❌ Bot error: {e}")
-        bot_running = False
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            logger.info(f"🤖 Starting Telegram bot (attempt {retry_count + 1}/{max_retries})...")
+            
+            # Crear aplicación de Telegram
+            telegram_app = (Application.builder()
+                           .token(TELEGRAM_TOKEN)
+                           .read_timeout(30)
+                           .write_timeout(30)
+                           .connect_timeout(30)
+                           .pool_timeout(30)
+                           .build())
+            
+            # Agregar handlers
+            telegram_app.add_handler(CommandHandler("start", start_command))
+            telegram_app.add_handler(CommandHandler("help", help_command))
+            telegram_app.add_handler(CommandHandler("iniciativas", list_initiatives_command))
+            telegram_app.add_handler(CommandHandler("crear", create_command))
+            telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+            
+            # Error handler
+            telegram_app.add_error_handler(error_handler)
+            
+            # Marcar como ejecutándose
+            bot_running = True
+            bot_start_time = datetime.now().isoformat()
+            
+            logger.info("🤖 Bot started successfully, beginning polling...")
+            
+            # Ejecutar polling con configuración optimizada para Render
+            await telegram_app.run_polling(
+                poll_interval=2.0,
+                timeout=10,
+                drop_pending_updates=True,
+                allowed_updates=['message']
+            )
+            
+            # Si llegamos aquí, el bot se detuvo normalmente
+            break
+            
+        except Exception as e:
+            retry_count += 1
+            bot_error_count += 1
+            bot_running = False
+            
+            logger.error(f"❌ Bot error (attempt {retry_count}/{max_retries}): {e}")
+            
+            if retry_count < max_retries:
+                wait_time = retry_count * 5  # 5, 10, 15 seconds
+                logger.info(f"🔄 Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error("❌ Max retries reached, bot stopped")
+                break
+    
+    bot_running = False
+    logger.info("🤖 Bot thread ended")
 
-def run_telegram_bot():
-    """Ejecutar bot en hilo separado"""
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(setup_telegram_bot())
-    except Exception as e:
-        logger.error(f"❌ Bot thread error: {e}")
-
-# ===== ENDPOINTS ADICIONALES =====
-
-@app.route("/health")
-def health():
-    """Health check"""
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "telegram_bot": {
-            "configured": bool(TELEGRAM_TOKEN),
-            "running": bot_running
-        },
-        "nocodb": {
-            "configured": bool(NOCODB_TOKEN)
-        }
-    })
-
-@app.route("/test-nocodb")
-def test_nocodb():
-    """Test NocoDB connection"""
-    data = get_nocodb_initiatives()
-    return jsonify(data)
-
-@app.route("/bot-status")
-def bot_status():
-    """Bot status"""
-    return jsonify({
-        "bot_running": bot_running,
-        "token_configured": bool(TELEGRAM_TOKEN),
-        "active_sessions": len(user_creation_state),
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route("/api/initiatives")
-def api_initiatives():
-    """API para listar iniciativas"""
-    data = get_nocodb_initiatives()
-    if data.get("success"):
-        return jsonify({"success": True, "data": data.get("data", [])})
+def start_bot_thread():
+    """Iniciar bot en thread separado con manejo de errores"""
+    global bot_running
+    
+    def run():
+        try:
+            # Crear nuevo event loop para este hilo
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Ejecutar el bot
+            loop.run_until_complete(run_bot())
+            
+        except Exception as e:
+            logger.error(f"❌ Critical error in bot thread: {e}")
+            global bot_running, bot_error_count
+            bot_running = False
+            bot_error_count += 1
+        finally:
+            # Asegurar que el loop se cierre
+            try:
+                loop.close()
+            except:
+                pass
+    
+    if TELEGRAM_TOKEN:
+        try:
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            logger.info("🤖 Bot thread started successfully")
+            
+            # Dar un momento para que se inicie
+            time.sleep(2)
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to start bot thread: {e}")
+            return False
     else:
-        return jsonify({"success": False, "error": data.get("error")}), 500
+        logger.warning("⚠️ Telegram token not configured")
+        return False
+
+# ===== INICIO DE LA APLICACIÓN =====
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     
-    print(f"🚀 Starting MCP Server on port {port}")
-    print(f"🤖 Telegram Bot: {'Configured' if TELEGRAM_TOKEN else 'Not configured'}")
+    print(f"🚀 Starting Initiatives MCP Server on port {port}")
+    print(f"🔗 NocoDB configured: {bool(NOCODB_TOKEN)}")
+    print(f"🤖 Telegram configured: {bool(TELEGRAM_TOKEN)}")
     
-    # Iniciar bot si está configurado
-    if TELEGRAM_TOKEN:
-        try:
-            bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-            bot_thread.start()
-            print("🤖 Telegram bot thread started")
-        except Exception as e:
-            print(f"❌ Failed to start bot: {e}")
+    # Iniciar bot de Telegram
+    if start_bot_thread():
+        print("🤖 Telegram bot initialization started")
+        # Dar tiempo para que se inicie
+        time.sleep(3)
+        print(f"🤖 Bot running status: {bot_running}")
+    else:
+        print("⚠️ Telegram bot failed to start")
     
-    # Iniciar Flask
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Iniciar servidor Flask
+    try:
+        print("🌐 Starting Flask server...")
+        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    except Exception as e:
+        logger.error(f"❌ Flask server error: {e}")
+        print(f"❌ Server failed to start: {e}")
