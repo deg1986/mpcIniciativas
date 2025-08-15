@@ -146,6 +146,34 @@ def api_create():
     result = create_initiative(request.json)
     return jsonify(result)
 
+@app.route('/start-bot', methods=['POST'])
+def start_bot_endpoint():
+    """Endpoint para iniciar el bot manualmente"""
+    global bot_running
+    
+    if bot_running:
+        return jsonify({
+            "message": "Bot already running",
+            "bot_running": True,
+            "start_time": bot_start_time
+        })
+    
+    try:
+        success = start_bot_thread()
+        return jsonify({
+            "message": "Bot start attempted",
+            "success": success,
+            "bot_running": bot_running,
+            "timestamp": datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"❌ Error starting bot via endpoint: {e}")
+        return jsonify({
+            "message": "Failed to start bot",
+            "error": str(e),
+            "bot_running": False
+        }), 500
+
 # ===== BOT DE TELEGRAM =====
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -396,13 +424,14 @@ if __name__ == "__main__":
     print(f"🚀 Starting server on port {port}")
     print(f"🤖 Telegram configured: {bool(TELEGRAM_TOKEN)}")
     
-    # Iniciar bot
+    # Iniciar bot automáticamente
     if start_bot_thread():
-        print("🤖 Bot started")
-        time.sleep(3)
+        print("🤖 Bot started automatically")
+        # Dar más tiempo para asegurar que se inicie
+        time.sleep(5)
         print(f"🤖 Bot running: {bot_running}")
     else:
-        print("⚠️ Bot failed to start")
+        print("⚠️ Bot failed to start automatically")
     
     # Iniciar Flask
     app.run(host='0.0.0.0', port=port, debug=False)
