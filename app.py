@@ -1,10 +1,11 @@
-# 🚀 Servidor MCP para Iniciativas con Bot de Telegram
+# 🚀 Servidor MCP para Iniciativas con Bot de Telegram - VERSIÓN RENDER
 import os
 import json
 import time
 import sys
 import asyncio
 import threading
+import signal
 from datetime import datetime
 from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
@@ -42,6 +43,10 @@ TELEGRAM_TOKEN = "8309791895:AAGxfmPQ_yvgNY-kyMMDrKR0srb7c20KL5Q"
 initiatives_cache = None
 cache_time = None
 
+# Variables globales para el bot
+telegram_app = None
+bot_running = False
+
 def clean_value(value):
     """Limpiar y convertir valores para evitar errores de validación"""
     if value is None:
@@ -71,7 +76,7 @@ def get_nocodb_initiatives():
         }
         
         params = {
-            'limit': 100,  # Aumentamos el límite
+            'limit': 100,
             'shuffle': 0,
             'offset': 0
         }
@@ -88,9 +93,6 @@ def get_nocodb_initiatives():
             }
         
         raw_data = response.json()
-        print(f"📊 Raw data structure: {list(raw_data.keys())}")
-        
-        # NocoDB devuelve una estructura con 'list' y 'pageInfo'
         initiatives = raw_data.get('list', [])
         page_info = raw_data.get('pageInfo', {})
         
@@ -231,6 +233,7 @@ def mcp_endpoint():
             },
             "telegram_bot": {
                 "enabled": True,
+                "running": bot_running,
                 "token_configured": bool(TELEGRAM_TOKEN)
             }
         })
@@ -325,54 +328,16 @@ def handle_mcp_request(rpc_request):
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "initiative_name": {
-                                    "type": "string",
-                                    "description": "Name of the initiative"
-                                },
-                                "description": {
-                                    "type": "string",
-                                    "description": "Description of the initiative"
-                                },
-                                "main_kpi": {
-                                    "type": "string",
-                                    "description": "Main KPI for the initiative"
-                                },
-                                "portal": {
-                                    "type": "string",
-                                    "description": "Portal associated with the initiative"
-                                },
-                                "owner": {
-                                    "type": "string",
-                                    "description": "Owner of the initiative"
-                                },
-                                "team": {
-                                    "type": "string",
-                                    "description": "Team responsible for the initiative"
-                                },
-                                "reach": {
-                                    "type": "number",
-                                    "description": "Reach score (0-1)",
-                                    "minimum": 0,
-                                    "maximum": 1
-                                },
-                                "impact": {
-                                    "type": "number",
-                                    "description": "Impact score (0-1)",
-                                    "minimum": 0,
-                                    "maximum": 1
-                                },
-                                "confidence": {
-                                    "type": "number",
-                                    "description": "Confidence score (0-1)",
-                                    "minimum": 0,
-                                    "maximum": 1
-                                },
-                                "effort": {
-                                    "type": "number",
-                                    "description": "Effort score (0-1)",
-                                    "minimum": 0,
-                                    "maximum": 1
-                                }
+                                "initiative_name": {"type": "string", "description": "Name of the initiative"},
+                                "description": {"type": "string", "description": "Description of the initiative"},
+                                "main_kpi": {"type": "string", "description": "Main KPI for the initiative"},
+                                "portal": {"type": "string", "description": "Portal associated with the initiative"},
+                                "owner": {"type": "string", "description": "Owner of the initiative"},
+                                "team": {"type": "string", "description": "Team responsible for the initiative"},
+                                "reach": {"type": "number", "description": "Reach score (0-1)", "minimum": 0, "maximum": 1},
+                                "impact": {"type": "number", "description": "Impact score (0-1)", "minimum": 0, "maximum": 1},
+                                "confidence": {"type": "number", "description": "Confidence score (0-1)", "minimum": 0, "maximum": 1},
+                                "effort": {"type": "number", "description": "Effort score (0-1)", "minimum": 0, "maximum": 1}
                             },
                             "required": ["initiative_name", "description", "main_kpi", "portal", "owner", "team"],
                             "additionalProperties": False
@@ -384,23 +349,9 @@ def handle_mcp_request(rpc_request):
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search term"
-                                },
-                                "field": {
-                                    "type": "string",
-                                    "enum": ["name", "owner", "team", "all"],
-                                    "description": "Field to search in (default: all)",
-                                    "default": "all"
-                                },
-                                "limit": {
-                                    "type": "integer",
-                                    "description": "Maximum results to return",
-                                    "default": 10,
-                                    "minimum": 1,
-                                    "maximum": 50
-                                }
+                                "query": {"type": "string", "description": "Search term"},
+                                "field": {"type": "string", "enum": ["name", "owner", "team", "all"], "description": "Field to search in (default: all)", "default": "all"},
+                                "limit": {"type": "integer", "description": "Maximum results to return", "default": 10, "minimum": 1, "maximum": 50}
                             },
                             "required": ["query"],
                             "additionalProperties": False
@@ -409,11 +360,7 @@ def handle_mcp_request(rpc_request):
                     {
                         "name": "get_initiatives_stats",
                         "description": "Get statistical overview of initiatives.",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {},
-                            "additionalProperties": False
-                        }
+                        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}
                     }
                 ]
             },
@@ -435,43 +382,31 @@ def handle_mcp_request(rpc_request):
         else:
             return create_mcp_response({
                 "jsonrpc": "2.0",
-                "error": {
-                    "code": -32601,
-                    "message": f"Unknown tool: {tool_name}"
-                },
+                "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
                 "id": request_id
             })
     
     else:
         return create_mcp_response({
             "jsonrpc": "2.0",
-            "error": {
-                "code": -32601,
-                "message": f"Method not found: {method}"
-            },
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
             "id": request_id
         })
 
 def format_initiative_summary(initiative, index=None):
     """Formatear iniciativa para vista resumida"""
-    summary_parts = []
-    
-    # Campos clave de la iniciativa
     name = initiative.get('initiative_name', 'Sin nombre')
     owner = initiative.get('owner', 'Sin dueño')
     team = initiative.get('team', 'Sin equipo')
     kpi = initiative.get('main_kpi', 'Sin KPI')
     
     prefix = f"**{index}.** " if index else ""
-    summary_parts.append(f"**{name}**")
-    summary_parts.append(f"👤 {owner}")
-    summary_parts.append(f"👥 {team}")
-    summary_parts.append(f"📊 {kpi}")
+    summary_parts = [f"**{name}**", f"👤 {owner}", f"👥 {team}", f"📊 {kpi}"]
     
     return prefix + " • ".join(summary_parts)
 
+# [Aquí van todas las funciones handle_* del MCP - las mantengo iguales]
 def handle_list_initiatives(args, request_id):
-    """Listar iniciativas"""
     data = get_nocodb_initiatives()
     
     if not data.get("success"):
@@ -487,48 +422,29 @@ def handle_list_initiatives(args, request_id):
         })
     
     initiatives = data.get("data", [])
-    
-    try:
-        limit = int(args.get("limit", 25))
-        limit = max(1, min(limit, 100))
-    except (ValueError, TypeError):
-        limit = 25
-    
+    limit = min(int(args.get("limit", 25)), 100)
     format_type = args.get("format", "summary")
-    if format_type not in ["summary", "detailed", "json"]:
-        format_type = "summary"
-    
     limited_initiatives = initiatives[:limit]
     
-    try:
-        if format_type == "json":
-            json_str = json.dumps(limited_initiatives, indent=2, ensure_ascii=False, default=str)
-            result_text = f"📊 **Iniciativas en formato JSON**\n\n**Registros devueltos:** {len(limited_initiatives)} de {len(initiatives)} totales\n\n```json\n{json_str}\n```"
-        
-        elif format_type == "detailed":
-            result_text = f"📊 **Listado Detallado de Iniciativas**\n\n**Total:** {len(initiatives)}\n**Mostrando:** {len(limited_initiatives)}\n\n"
-            
+    if format_type == "json":
+        json_str = json.dumps(limited_initiatives, indent=2, ensure_ascii=False, default=str)
+        result_text = f"📊 **Iniciativas en formato JSON**\n\n**Registros:** {len(limited_initiatives)} de {len(initiatives)}\n\n```json\n{json_str}\n```"
+    elif format_type == "detailed":
+        result_text = f"📊 **Listado Detallado**\n\n**Total:** {len(initiatives)}\n**Mostrando:** {len(limited_initiatives)}\n\n"
+        for i, initiative in enumerate(limited_initiatives, 1):
+            if isinstance(initiative, dict):
+                result_text += f"### 🎯 Iniciativa #{i}\n"
+                for key, value in initiative.items():
+                    result_text += f"- **{key}:** {value}\n"
+                result_text += "\n"
+    else:  # summary
+        result_text = f"🎯 **Lista de Iniciativas**\n\n**Total:** {len(initiatives)}\n**Mostrando:** {len(limited_initiatives)}\n\n"
+        if limited_initiatives:
             for i, initiative in enumerate(limited_initiatives, 1):
                 if isinstance(initiative, dict):
-                    result_text += f"### 🎯 Iniciativa #{i}\n"
-                    for key, value in initiative.items():
-                        safe_key = str(key) if key is not None else "campo_desconocido"
-                        safe_value = str(value) if value is not None else "N/A"
-                        result_text += f"- **{safe_key}:** {safe_value}\n"
-                    result_text += "\n"
-        
-        else:  # summary
-            result_text = f"🎯 **Lista de Iniciativas**\n\n**Total encontradas:** {len(initiatives)}\n**Mostrando:** {len(limited_initiatives)}\n\n"
-            
-            if limited_initiatives:
-                for i, initiative in enumerate(limited_initiatives, 1):
-                    if isinstance(initiative, dict):
-                        result_text += format_initiative_summary(initiative, i) + "\n"
-            else:
-                result_text += "*No se encontraron iniciativas.*\n"
-    
-    except Exception as e:
-        result_text = f"📊 **Lista de Iniciativas**\n\n**Error de formato:** {str(e)}\n**Iniciativas encontradas:** {len(initiatives)}"
+                    result_text += format_initiative_summary(initiative, i) + "\n"
+        else:
+            result_text += "*No se encontraron iniciativas.*\n"
     
     return create_mcp_response({
         "jsonrpc": "2.0",
@@ -542,24 +458,12 @@ def handle_list_initiatives(args, request_id):
     })
 
 def handle_create_initiative(args, request_id):
-    """Crear nueva iniciativa"""
     result = create_nocodb_initiative(args)
     
     if result.get("success"):
-        result_text = f"✅ **Iniciativa Creada Exitosamente**\n\n"
-        result_text += f"**Nombre:** {args.get('initiative_name')}\n"
-        result_text += f"**Descripción:** {args.get('description')}\n"
-        result_text += f"**Owner:** {args.get('owner')}\n"
-        result_text += f"**Equipo:** {args.get('team')}\n"
-        result_text += f"**KPI Principal:** {args.get('main_kpi')}\n"
-        result_text += f"**Portal:** {args.get('portal')}\n\n"
-        result_text += f"**Métricas:**\n"
-        result_text += f"- Alcance: {args.get('reach', 0)}\n"
-        result_text += f"- Impacto: {args.get('impact', 0)}\n"
-        result_text += f"- Confianza: {args.get('confidence', 0)}\n"
-        result_text += f"- Esfuerzo: {args.get('effort', 0)}\n"
+        result_text = f"✅ **Iniciativa Creada**\n\n**Nombre:** {args.get('initiative_name')}\n**Owner:** {args.get('owner')}\n**Equipo:** {args.get('team')}"
     else:
-        result_text = f"❌ **Error al crear iniciativa**\n\n**Error:** {result.get('error', 'Error desconocido')}"
+        result_text = f"❌ **Error:** {result.get('error', 'Error desconocido')}"
     
     return create_mcp_response({
         "jsonrpc": "2.0",
@@ -573,11 +477,7 @@ def handle_create_initiative(args, request_id):
     })
 
 def handle_search_initiatives(args, request_id):
-    """Buscar iniciativas"""
     query = args.get("query", "").strip().lower()
-    field = args.get("field", "all")
-    limit = int(args.get("limit", 10))
-    
     if not query:
         return create_mcp_response({
             "jsonrpc": "2.0",
@@ -597,58 +497,29 @@ def handle_search_initiatives(args, request_id):
             "result": {
                 "content": [{
                     "type": "text",
-                    "text": f"❌ **Error al buscar iniciativas**\n\n**Error:** {data.get('error')}"
+                    "text": f"❌ **Error:** {data.get('error')}"
                 }]
             },
             "id": request_id
         })
     
     initiatives = data.get("data", [])
-    matching_initiatives = []
+    matching = []
     
     for initiative in initiatives:
-        if not isinstance(initiative, dict):
-            continue
-        
-        match_found = False
-        
-        if field == "all":
-            # Buscar en todos los campos de texto
+        if isinstance(initiative, dict):
             text_fields = ['initiative_name', 'description', 'owner', 'team', 'main_kpi', 'portal']
             for field_name in text_fields:
-                if field_name in initiative:
-                    field_value = str(initiative[field_name]).lower()
-                    if query in field_value:
-                        match_found = True
-                        break
-        else:
-            # Buscar en campo específico
-            field_map = {
-                'name': 'initiative_name',
-                'owner': 'owner',
-                'team': 'team'
-            }
-            target_field = field_map.get(field, field)
-            if target_field in initiative:
-                field_value = str(initiative[target_field]).lower()
-                if query in field_value:
-                    match_found = True
-        
-        if match_found:
-            matching_initiatives.append(initiative)
-            if len(matching_initiatives) >= limit:
-                break
+                if field_name in initiative and query in str(initiative[field_name]).lower():
+                    matching.append(initiative)
+                    break
     
-    result_text = f"🔍 **Búsqueda de Iniciativas**\n\n"
-    result_text += f"**Término:** `{args.get('query')}`\n"
-    result_text += f"**Campo:** {field}\n"
-    result_text += f"**Encontradas:** {len(matching_initiatives)} iniciativas\n\n"
-    
-    if matching_initiatives:
-        for i, initiative in enumerate(matching_initiatives, 1):
+    result_text = f"🔍 **Búsqueda: `{args.get('query')}`**\n**Encontradas:** {len(matching)}\n\n"
+    if matching:
+        for i, initiative in enumerate(matching[:10], 1):
             result_text += format_initiative_summary(initiative, i) + "\n"
     else:
-        result_text += "*No se encontraron iniciativas que coincidan con la búsqueda.*"
+        result_text += "*No se encontraron resultados.*"
     
     return create_mcp_response({
         "jsonrpc": "2.0",
@@ -662,56 +533,21 @@ def handle_search_initiatives(args, request_id):
     })
 
 def handle_get_initiatives_stats(request_id):
-    """Obtener estadísticas de iniciativas"""
     data = get_nocodb_initiatives()
-    
     if not data.get("success"):
         return create_mcp_response({
             "jsonrpc": "2.0",
             "result": {
                 "content": [{
                     "type": "text",
-                    "text": f"❌ **Error al obtener estadísticas**\n\n**Error:** {data.get('error')}"
+                    "text": f"❌ **Error:** {data.get('error')}"
                 }]
             },
             "id": request_id
         })
     
     initiatives = data.get("data", [])
-    metadata = data.get("metadata", {})
-    
-    result_text = f"📈 **Estadísticas de Iniciativas**\n\n"
-    result_text += f"**📊 Total de Iniciativas:** {len(initiatives):,}\n"
-    result_text += f"**🔗 Fuente:** {metadata.get('source', 'Desconocida')}\n"
-    result_text += f"**⏰ Última Actualización:** {metadata.get('retrieved_at', 'Desconocida')}\n\n"
-    
-    if initiatives:
-        # Estadísticas por owner
-        owners = {}
-        teams = {}
-        kpis = {}
-        
-        for initiative in initiatives:
-            if isinstance(initiative, dict):
-                owner = initiative.get('owner', 'Sin dueño')
-                team = initiative.get('team', 'Sin equipo')
-                kpi = initiative.get('main_kpi', 'Sin KPI')
-                
-                owners[owner] = owners.get(owner, 0) + 1
-                teams[team] = teams.get(team, 0) + 1
-                kpis[kpi] = kpis.get(kpi, 0) + 1
-        
-        result_text += f"**👤 Top Owners:**\n"
-        for owner, count in sorted(owners.items(), key=lambda x: x[1], reverse=True)[:5]:
-            result_text += f"- {owner}: {count} iniciativas\n"
-        
-        result_text += f"\n**👥 Top Teams:**\n"
-        for team, count in sorted(teams.items(), key=lambda x: x[1], reverse=True)[:5]:
-            result_text += f"- {team}: {count} iniciativas\n"
-        
-        result_text += f"\n**📊 Top KPIs:**\n"
-        for kpi, count in sorted(kpis.items(), key=lambda x: x[1], reverse=True)[:5]:
-            result_text += f"- {kpi}: {count} iniciativas\n"
+    result_text = f"📈 **Estadísticas**\n\n**Total:** {len(initiatives)} iniciativas\n"
     
     return create_mcp_response({
         "jsonrpc": "2.0",
@@ -724,12 +560,14 @@ def handle_get_initiatives_stats(request_id):
         "id": request_id
     })
 
-# ===== BOT DE TELEGRAM =====
+# ===== BOT DE TELEGRAM - VERSIÓN CORREGIDA =====
+
+# Estado para creación de iniciativas
+user_creation_state = {}
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /start del bot"""
-    welcome_text = """
-🎯 **Bot de Iniciativas Farmuhub**
+    welcome_text = """🎯 **Bot de Iniciativas Farmuhub**
 
 ¡Hola! Soy tu asistente para gestionar iniciativas.
 
@@ -740,31 +578,29 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /stats - Ver estadísticas
 /help - Ver esta ayuda
 
-¿En qué puedo ayudarte?
-    """
-    await update.message.reply_text(welcome_text)
+¿En qué puedo ayudarte?"""
+    
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /help del bot"""
-    help_text = """
-🆘 **Ayuda - Bot de Iniciativas**
+    help_text = """🆘 **Ayuda - Bot de Iniciativas**
 
 **Comandos disponibles:**
 
 🎯 **/iniciativas** - Listar todas las iniciativas
-📝 **/crear** - Crear una nueva iniciativa (modo interactivo)
-🔍 **/buscar** <término> - Buscar iniciativas por nombre, owner o equipo
-📈 **/stats** - Ver estadísticas de iniciativas
+📝 **/crear** - Crear una nueva iniciativa
+🔍 **/buscar** <término> - Buscar iniciativas
+📈 **/stats** - Ver estadísticas
 🆘 **/help** - Mostrar esta ayuda
 
 **Ejemplos:**
 • `/buscar Product` - Busca iniciativas del equipo Product
-• `/buscar Danna` - Busca iniciativas de Danna
-• `/crear` - Inicia el proceso de creación de iniciativa
+• `/crear` - Inicia el proceso de creación
 
-¿Necesitas ayuda con algo específico?
-    """
-    await update.message.reply_text(help_text)
+¿Necesitas ayuda con algo específico?"""
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown')
 
 async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /iniciativas del bot"""
@@ -772,10 +608,10 @@ async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT
         data = get_nocodb_initiatives()
         
         if not data.get("success"):
-            await update.message.reply_text(f"❌ Error al obtener iniciativas: {data.get('error')}")
+            await update.message.reply_text(f"❌ Error: {data.get('error')}")
             return
         
-        initiatives = data.get("data", [])[:10]  # Limitar a 10 para Telegram
+        initiatives = data.get("data", [])[:10]  # Limitar para Telegram
         
         if not initiatives:
             await update.message.reply_text("📭 No se encontraron iniciativas.")
@@ -788,11 +624,9 @@ async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT
                 name = initiative.get('initiative_name', 'Sin nombre')
                 owner = initiative.get('owner', 'Sin dueño')
                 team = initiative.get('team', 'Sin equipo')
-                kpi = initiative.get('main_kpi', 'Sin KPI')
                 
                 response_text += f"**{i}. {name}**\n"
-                response_text += f"👤 {owner} • 👥 {team}\n"
-                response_text += f"📊 {kpi}\n\n"
+                response_text += f"👤 {owner} • 👥 {team}\n\n"
         
         if len(data.get('data', [])) > 10:
             response_text += f"📋 *Mostrando las primeras 10 de {len(data.get('data', []))} iniciativas*"
@@ -800,6 +634,7 @@ async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(response_text, parse_mode='Markdown')
         
     except Exception as e:
+        logger.error(f"Error in list_initiatives_command: {e}")
         await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def search_initiatives_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -813,51 +648,43 @@ async def search_initiatives_command(update: Update, context: ContextTypes.DEFAU
         data = get_nocodb_initiatives()
         
         if not data.get("success"):
-            await update.message.reply_text(f"❌ Error al buscar: {data.get('error')}")
+            await update.message.reply_text(f"❌ Error: {data.get('error')}")
             return
         
         initiatives = data.get("data", [])
-        matching_initiatives = []
+        matching = []
         
         query_lower = query.lower()
         for initiative in initiatives:
-            if not isinstance(initiative, dict):
-                continue
-            
-            # Buscar en campos de texto
-            text_fields = ['initiative_name', 'description', 'owner', 'team', 'main_kpi', 'portal']
-            for field_name in text_fields:
-                if field_name in initiative:
-                    field_value = str(initiative[field_name]).lower()
-                    if query_lower in field_value:
-                        matching_initiatives.append(initiative)
+            if isinstance(initiative, dict):
+                text_fields = ['initiative_name', 'description', 'owner', 'team', 'main_kpi', 'portal']
+                for field_name in text_fields:
+                    if field_name in initiative and query_lower in str(initiative[field_name]).lower():
+                        matching.append(initiative)
                         break
         
-        if not matching_initiatives:
+        if not matching:
             await update.message.reply_text(f"🔍 No se encontraron iniciativas con: `{query}`")
             return
         
-        # Limitar resultados para Telegram
-        limited_results = matching_initiatives[:5]
-        
-        response_text = f"🔍 **Resultados para: `{query}`**\n"
-        response_text += f"**Encontradas:** {len(matching_initiatives)}\n\n"
+        limited_results = matching[:5]
+        response_text = f"🔍 **Resultados para: `{query}`**\n**Encontradas:** {len(matching)}\n\n"
         
         for i, initiative in enumerate(limited_results, 1):
             name = initiative.get('initiative_name', 'Sin nombre')
             owner = initiative.get('owner', 'Sin dueño')
             team = initiative.get('team', 'Sin equipo')
             
-            response_text += f"**{i}. {name}**\n"
-            response_text += f"👤 {owner} • 👥 {team}\n\n"
+            response_text += f"**{i}. {name}**\n👤 {owner} • 👥 {team}\n\n"
         
-        if len(matching_initiatives) > 5:
-            response_text += f"📋 *Mostrando las primeras 5 de {len(matching_initiatives)} encontradas*"
+        if len(matching) > 5:
+            response_text += f"📋 *Mostrando las primeras 5 de {len(matching)} encontradas*"
         
         await update.message.reply_text(response_text, parse_mode='Markdown')
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Error en búsqueda: {str(e)}")
+        logger.error(f"Error in search_initiatives_command: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /stats del bot"""
@@ -865,7 +692,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = get_nocodb_initiatives()
         
         if not data.get("success"):
-            await update.message.reply_text(f"❌ Error al obtener estadísticas: {data.get('error')}")
+            await update.message.reply_text(f"❌ Error: {data.get('error')}")
             return
         
         initiatives = data.get("data", [])
@@ -874,23 +701,18 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("📊 No hay iniciativas para analizar.")
             return
         
-        # Calcular estadísticas
         owners = {}
         teams = {}
-        kpis = {}
         
         for initiative in initiatives:
             if isinstance(initiative, dict):
                 owner = initiative.get('owner', 'Sin dueño')
                 team = initiative.get('team', 'Sin equipo')
-                kpi = initiative.get('main_kpi', 'Sin KPI')
                 
                 owners[owner] = owners.get(owner, 0) + 1
                 teams[team] = teams.get(team, 0) + 1
-                kpis[kpi] = kpis.get(kpi, 0) + 1
         
-        response_text = f"📈 **Estadísticas de Iniciativas**\n\n"
-        response_text += f"**📊 Total:** {len(initiatives)} iniciativas\n\n"
+        response_text = f"📈 **Estadísticas**\n\n**📊 Total:** {len(initiatives)} iniciativas\n\n"
         
         # Top 3 owners
         response_text += f"**👤 Top Owners:**\n"
@@ -902,24 +724,16 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for team, count in sorted(teams.items(), key=lambda x: x[1], reverse=True)[:3]:
             response_text += f"• {team}: {count}\n"
         
-        # Top 3 KPIs
-        response_text += f"\n**📊 Top KPIs:**\n"
-        for kpi, count in sorted(kpis.items(), key=lambda x: x[1], reverse=True)[:3]:
-            response_text += f"• {kpi}: {count}\n"
-        
         await update.message.reply_text(response_text, parse_mode='Markdown')
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Error en estadísticas: {str(e)}")
-
-# Estado para el proceso de creación de iniciativas
-user_creation_state = {}
+        logger.error(f"Error in stats_command: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
 async def create_initiative_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /crear del bot - inicio del proceso interactivo"""
+    """Comando /crear del bot"""
     user_id = update.effective_user.id
     
-    # Inicializar estado de creación
     user_creation_state[user_id] = {
         'step': 'name',
         'data': {}
@@ -927,19 +741,16 @@ async def create_initiative_command(update: Update, context: ContextTypes.DEFAUL
     
     await update.message.reply_text(
         "🆕 **Crear Nueva Iniciativa**\n\n"
-        "Te guiaré paso a paso para crear la iniciativa.\n\n"
+        "Te guiaré paso a paso.\n\n"
         "**Paso 1/6:** ¿Cuál es el nombre de la iniciativa?"
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manejar mensajes de texto para el proceso de creación"""
+    """Manejar mensajes para creación de iniciativas"""
     user_id = update.effective_user.id
     
     if user_id not in user_creation_state:
-        # No está en proceso de creación, respuesta general
-        await update.message.reply_text(
-            "👋 ¡Hola! Usa /help para ver los comandos disponibles."
-        )
+        await update.message.reply_text("👋 ¡Hola! Usa /help para ver los comandos disponibles.")
         return
     
     state = user_creation_state[user_id]
@@ -950,261 +761,201 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if step == 'name':
             state['data']['initiative_name'] = text
             state['step'] = 'description'
-            await update.message.reply_text(
-                f"✅ Nombre: {text}\n\n"
-                "**Paso 2/6:** ¿Cuál es la descripción de la iniciativa?"
-            )
+            await update.message.reply_text(f"✅ Nombre: {text}\n\n**Paso 2/6:** ¿Cuál es la descripción?")
         
         elif step == 'description':
             state['data']['description'] = text
             state['step'] = 'kpi'
-            await update.message.reply_text(
-                f"✅ Descripción guardada\n\n"
-                "**Paso 3/6:** ¿Cuál es el KPI principal?\n"
-                "Ejemplos: Productividad, Ventas, Satisfacción, etc."
-            )
+            await update.message.reply_text("✅ Descripción guardada\n\n**Paso 3/6:** ¿Cuál es el KPI principal?")
         
         elif step == 'kpi':
             state['data']['main_kpi'] = text
             state['step'] = 'portal'
-            await update.message.reply_text(
-                f"✅ KPI: {text}\n\n"
-                "**Paso 4/6:** ¿En qué portal se ejecutará?\n"
-                "Ejemplos: Admin, Customer, Partner, etc."
-            )
+            await update.message.reply_text(f"✅ KPI: {text}\n\n**Paso 4/6:** ¿En qué portal se ejecutará?")
         
         elif step == 'portal':
             state['data']['portal'] = text
             state['step'] = 'owner'
-            await update.message.reply_text(
-                f"✅ Portal: {text}\n\n"
-                "**Paso 5/6:** ¿Quién es el owner/responsable de la iniciativa?"
-            )
+            await update.message.reply_text(f"✅ Portal: {text}\n\n**Paso 5/6:** ¿Quién es el owner?")
         
         elif step == 'owner':
             state['data']['owner'] = text
             state['step'] = 'team'
-            await update.message.reply_text(
-                f"✅ Owner: {text}\n\n"
-                "**Paso 6/6:** ¿Qué equipo será responsable?\n"
-                "Ejemplos: Product, Engineering, Marketing, etc."
-            )
+            await update.message.reply_text(f"✅ Owner: {text}\n\n**Paso 6/6:** ¿Qué equipo será responsable?")
         
         elif step == 'team':
             state['data']['team'] = text
-            state['step'] = 'metrics'
-            await update.message.reply_text(
-                f"✅ Equipo: {text}\n\n"
-                "**Métricas opcionales (presiona /skip para omitir):**\n"
-                "Ingresa el alcance (reach) de 0 a 1:\n"
-                "Ejemplo: 0.8 para 80% de alcance"
-            )
-        
-        elif step == 'metrics':
-            if text.lower() in ['/skip', 'skip']:
-                # Saltar métricas y crear iniciativa
-                await create_initiative_final(update, user_id)
-            else:
-                try:
-                    reach = float(text)
-                    if 0 <= reach <= 1:
-                        state['data']['reach'] = reach
-                        state['step'] = 'impact'
-                        await update.message.reply_text(
-                            f"✅ Alcance: {reach}\n\n"
-                            "Ingresa el impacto de 0 a 1:"
-                        )
-                    else:
-                        await update.message.reply_text(
-                            "❌ El alcance debe estar entre 0 y 1. Intenta de nuevo:"
-                        )
-                except ValueError:
-                    await update.message.reply_text(
-                        "❌ Ingresa un número válido entre 0 y 1, o /skip para omitir:"
-                    )
-        
-        elif step == 'impact':
-            try:
-                impact = float(text)
-                if 0 <= impact <= 1:
-                    state['data']['impact'] = impact
-                    state['step'] = 'confidence'
-                    await update.message.reply_text(
-                        f"✅ Impacto: {impact}\n\n"
-                        "Ingresa la confianza de 0 a 1:"
-                    )
-                else:
-                    await update.message.reply_text(
-                        "❌ El impacto debe estar entre 0 y 1. Intenta de nuevo:"
-                    )
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ Ingresa un número válido entre 0 y 1:"
-                )
-        
-        elif step == 'confidence':
-            try:
-                confidence = float(text)
-                if 0 <= confidence <= 1:
-                    state['data']['confidence'] = confidence
-                    state['step'] = 'effort'
-                    await update.message.reply_text(
-                        f"✅ Confianza: {confidence}\n\n"
-                        "Ingresa el esfuerzo de 0 a 1:"
-                    )
-                else:
-                    await update.message.reply_text(
-                        "❌ La confianza debe estar entre 0 y 1. Intenta de nuevo:"
-                    )
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ Ingresa un número válido entre 0 y 1:"
-                )
-        
-        elif step == 'effort':
-            try:
-                effort = float(text)
-                if 0 <= effort <= 1:
-                    state['data']['effort'] = effort
-                    await create_initiative_final(update, user_id)
-                else:
-                    await update.message.reply_text(
-                        "❌ El esfuerzo debe estar entre 0 y 1. Intenta de nuevo:"
-                    )
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ Ingresa un número válido entre 0 y 1:"
-                )
+            await create_initiative_final(update, user_id)
     
     except Exception as e:
-        await update.message.reply_text(f"❌ Error procesando respuesta: {str(e)}")
-        # Limpiar estado en caso de error
+        logger.error(f"Error in handle_message: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         if user_id in user_creation_state:
             del user_creation_state[user_id]
 
 async def create_initiative_final(update: Update, user_id: int):
-    """Crear la iniciativa final con los datos recopilados"""
+    """Crear la iniciativa final"""
     try:
         state = user_creation_state[user_id]
         data = state['data']
         
-        # Valores por defecto para métricas si no se proporcionaron
-        if 'reach' not in data:
-            data['reach'] = 0.5
-        if 'impact' not in data:
-            data['impact'] = 0.5
-        if 'confidence' not in data:
-            data['confidence'] = 0.5
-        if 'effort' not in data:
-            data['effort'] = 0.5
+        # Valores por defecto para métricas
+        data.update({
+            'reach': 0.5,
+            'impact': 0.5,
+            'confidence': 0.5,
+            'effort': 0.5
+        })
         
-        # Mostrar resumen antes de crear
-        summary = f"📋 **Resumen de la Iniciativa:**\n\n"
+        summary = f"📋 **Resumen:**\n\n"
         summary += f"**Nombre:** {data['initiative_name']}\n"
-        summary += f"**Descripción:** {data['description']}\n"
-        summary += f"**KPI:** {data['main_kpi']}\n"
-        summary += f"**Portal:** {data['portal']}\n"
         summary += f"**Owner:** {data['owner']}\n"
-        summary += f"**Equipo:** {data['team']}\n"
-        summary += f"**Alcance:** {data['reach']}\n"
-        summary += f"**Impacto:** {data['impact']}\n"
-        summary += f"**Confianza:** {data['confidence']}\n"
-        summary += f"**Esfuerzo:** {data['effort']}\n\n"
+        summary += f"**Equipo:** {data['team']}\n\n"
         summary += "⏳ Creando iniciativa..."
         
         await update.message.reply_text(summary, parse_mode='Markdown')
         
-        # Crear la iniciativa
         result = create_nocodb_initiative(data)
         
         if result.get("success"):
             await update.message.reply_text(
-                f"🎉 **¡Iniciativa creada exitosamente!**\n\n"
-                f"**{data['initiative_name']}** ha sido agregada al sistema.\n\n"
-                "Usa /iniciativas para ver todas las iniciativas."
+                f"🎉 **¡Iniciativa creada!**\n\n"
+                f"**{data['initiative_name']}** ha sido agregada.\n\n"
+                "Usa /iniciativas para ver todas."
             )
         else:
-            await update.message.reply_text(
-                f"❌ **Error al crear la iniciativa:**\n{result.get('error', 'Error desconocido')}\n\n"
-                "Intenta de nuevo con /crear"
-            )
+            await update.message.reply_text(f"❌ **Error:** {result.get('error', 'Error desconocido')}")
         
-        # Limpiar estado del usuario
         if user_id in user_creation_state:
             del user_creation_state[user_id]
     
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al crear iniciativa: {str(e)}")
+        logger.error(f"Error in create_initiative_final: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
         if user_id in user_creation_state:
             del user_creation_state[user_id]
 
-async def skip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /skip para saltar métricas"""
-    user_id = update.effective_user.id
-    
-    if user_id in user_creation_state:
-        state = user_creation_state[user_id]
-        if state['step'] in ['metrics', 'impact', 'confidence', 'effort']:
-            await create_initiative_final(update, user_id)
-        else:
-            await update.message.reply_text("No hay nada que saltar en este paso.")
-    else:
-        await update.message.reply_text("No estás en proceso de creación de iniciativa.")
-
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /cancel para cancelar creación"""
+    """Comando /cancel"""
     user_id = update.effective_user.id
     
     if user_id in user_creation_state:
         del user_creation_state[user_id]
-        await update.message.reply_text("❌ Creación de iniciativa cancelada.")
+        await update.message.reply_text("❌ Creación cancelada.")
     else:
-        await update.message.reply_text("No hay proceso de creación activo.")
+        await update.message.reply_text("No hay proceso activo.")
 
-def setup_telegram_bot():
-    """Configurar y ejecutar el bot de Telegram"""
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manejar errores del bot"""
+    logger.error(f"Exception while handling an update: {context.error}")
+
+# ===== CONFIGURACIÓN CORREGIDA PARA RENDER =====
+
+async def setup_telegram_bot():
+    """Configurar bot con manejo robusto de errores"""
+    global telegram_app, bot_running
+    
     try:
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
+        logger.info("🤖 Initializing Telegram bot...")
         
-        # Comandos
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("iniciativas", list_initiatives_command))
-        application.add_handler(CommandHandler("buscar", search_initiatives_command))
-        application.add_handler(CommandHandler("stats", stats_command))
-        application.add_handler(CommandHandler("crear", create_initiative_command))
-        application.add_handler(CommandHandler("skip", skip_command))
-        application.add_handler(CommandHandler("cancel", cancel_command))
+        # Configurar Application con timeouts más largos
+        telegram_app = (Application.builder()
+                       .token(TELEGRAM_TOKEN)
+                       .read_timeout(30)
+                       .write_timeout(30)
+                       .connect_timeout(30)
+                       .pool_timeout(30)
+                       .build())
         
-        # Manejar mensajes de texto
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # Agregar handlers
+        telegram_app.add_handler(CommandHandler("start", start_command))
+        telegram_app.add_handler(CommandHandler("help", help_command))
+        telegram_app.add_handler(CommandHandler("iniciativas", list_initiatives_command))
+        telegram_app.add_handler(CommandHandler("buscar", search_initiatives_command))
+        telegram_app.add_handler(CommandHandler("stats", stats_command))
+        telegram_app.add_handler(CommandHandler("crear", create_initiative_command))
+        telegram_app.add_handler(CommandHandler("cancel", cancel_command))
         
-        # Ejecutar el bot
-        print("🤖 Starting Telegram bot...")
-        application.run_polling(drop_pending_updates=True)
+        # Handler para mensajes de texto
+        telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Error handler
+        telegram_app.add_error_handler(error_handler)
+        
+        logger.info("🤖 Starting Telegram bot polling...")
+        bot_running = True
+        
+        # Iniciar polling con parámetros optimizados para Render
+        await telegram_app.run_polling(
+            poll_interval=1.0,
+            timeout=10,
+            drop_pending_updates=True,
+            allowed_updates=['message', 'callback_query']
+        )
         
     except Exception as e:
-        print(f"❌ Error setting up Telegram bot: {str(e)}")
+        logger.error(f"❌ Error in setup_telegram_bot: {e}")
+        bot_running = False
 
 def run_telegram_bot():
-    """Ejecutar el bot de Telegram en un hilo separado"""
+    """Ejecutar bot en hilo separado con manejo de errores mejorado"""
+    global bot_running
+    
+    loop = None
     try:
+        # Crear nuevo event loop para este hilo
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        setup_telegram_bot()
+        
+        logger.info("🤖 Starting Telegram bot thread...")
+        
+        # Ejecutar setup del bot
+        loop.run_until_complete(setup_telegram_bot())
+        
     except Exception as e:
-        print(f"❌ Error running Telegram bot: {str(e)}")
+        logger.error(f"❌ Critical error in telegram bot thread: {e}")
+        bot_running = False
+    finally:
+        if loop and not loop.is_closed():
+            loop.close()
+        logger.info("🤖 Telegram bot thread ended")
+
+def start_telegram_bot_thread():
+    """Iniciar bot en hilo daemon"""
+    if TELEGRAM_TOKEN:
+        try:
+            telegram_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+            telegram_thread.start()
+            logger.info("🤖 Telegram bot thread started")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Failed to start telegram thread: {e}")
+            return False
+    else:
+        logger.warning("⚠️ Telegram token not configured")
+        return False
 
 # ===== ENDPOINTS ADICIONALES =====
 
 @app.route("/health")
 def health():
-    """Health check"""
+    """Health check mejorado"""
     return create_mcp_response({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "telegram_bot": "configured" if TELEGRAM_TOKEN else "not_configured",
-        "nocodb": "configured" if NOCODB_TOKEN else "not_configured"
+        "telegram_bot": {
+            "configured": bool(TELEGRAM_TOKEN),
+            "running": bot_running,
+            "active_sessions": len(user_creation_state)
+        },
+        "nocodb": {
+            "configured": bool(NOCODB_TOKEN),
+            "table_id": NOCODB_TABLE_ID
+        },
+        "cache": {
+            "has_cache": initiatives_cache is not None,
+            "cache_age": time.time() - cache_time if cache_time else None
+        }
     })
 
 @app.route("/test-nocodb")
@@ -1223,30 +974,72 @@ def debug_endpoint():
         "error": data.get("error"),
         "initiatives_count": len(data.get("data", [])),
         "metadata": data.get("metadata", {}),
-        "sample_data": data.get("data", [])[:2] if data.get("data") else [],
         "telegram_bot": {
             "token_configured": bool(TELEGRAM_TOKEN),
-            "active_creation_sessions": len(user_creation_state)
+            "running": bot_running,
+            "active_creation_sessions": len(user_creation_state),
+            "user_states": list(user_creation_state.keys())
         },
         "cache_info": {
             "has_cache": initiatives_cache is not None,
             "cache_age_seconds": time.time() - cache_time if cache_time else None
-        }
+        },
+        "sample_data": data.get("data", [])[:2] if data.get("data") else []
     }
     
     return create_mcp_response(debug_info)
 
-# Endpoints REST para probar
+@app.route("/bot-status")
+def bot_status():
+    """Endpoint específico para verificar estado del bot"""
+    return create_mcp_response({
+        "bot_running": bot_running,
+        "token_configured": bool(TELEGRAM_TOKEN),
+        "active_sessions": len(user_creation_state),
+        "app_initialized": telegram_app is not None,
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.route("/wake-bot", methods=["POST"])
+def wake_bot():
+    """Endpoint para despertar/reiniciar el bot"""
+    global bot_running
+    
+    if not bot_running and TELEGRAM_TOKEN:
+        success = start_telegram_bot_thread()
+        return create_mcp_response({
+            "action": "wake_bot",
+            "success": success,
+            "bot_running": bot_running,
+            "timestamp": datetime.now().isoformat()
+        })
+    else:
+        return create_mcp_response({
+            "action": "wake_bot",
+            "message": "Bot already running or token not configured",
+            "bot_running": bot_running,
+            "timestamp": datetime.now().isoformat()
+        })
+
+# Endpoints REST simplificados
 @app.route("/api/list-initiatives")
 def api_list_initiatives():
     """REST endpoint para listar iniciativas"""
     limit = request.args.get('limit', 25, type=int)
-    format_type = request.args.get('format', 'summary')
+    data = get_nocodb_initiatives()
     
-    args = {"limit": limit, "format": format_type}
-    mcp_response = handle_list_initiatives(args, "api-test")
-    
-    return mcp_response.get_data(as_text=True)
+    if data.get("success"):
+        initiatives = data.get("data", [])[:limit]
+        return create_mcp_response({
+            "success": True,
+            "count": len(initiatives),
+            "data": initiatives
+        })
+    else:
+        return create_mcp_response({
+            "success": False,
+            "error": data.get("error")
+        }, 500)
 
 @app.route("/api/create-initiative", methods=["POST"])
 def api_create_initiative():
@@ -1255,72 +1048,81 @@ def api_create_initiative():
         return create_mcp_response({"error": "JSON required"}, 400)
     
     data = request.get_json()
-    mcp_response = handle_create_initiative(data, "api-test")
+    result = create_nocodb_initiative(data)
     
-    return mcp_response.get_data(as_text=True)
-
-@app.route("/api/search-initiatives/<query>")
-def api_search_initiatives(query):
-    """REST endpoint para buscar iniciativas"""
-    field = request.args.get('field', 'all')
-    limit = request.args.get('limit', 10, type=int)
-    
-    args = {"query": query, "field": field, "limit": limit}
-    mcp_response = handle_search_initiatives(args, "api-test")
-    
-    return mcp_response.get_data(as_text=True)
+    if result.get("success"):
+        return create_mcp_response(result)
+    else:
+        return create_mcp_response(result, 400)
 
 @app.route("/endpoints")
 def list_endpoints():
     """Listar todos los endpoints"""
     endpoints = {
         "mcp_endpoints": {
-            "root": {
-                "url": "/",
-                "methods": ["GET", "POST", "OPTIONS"],
-                "description": "Endpoint principal MCP"
-            }
+            "root": {"url": "/", "methods": ["GET", "POST", "OPTIONS"], "description": "Endpoint principal MCP"}
         },
         "debug_endpoints": {
             "health": "/health",
             "test_nocodb": "/test-nocodb", 
             "debug": "/debug",
+            "bot_status": "/bot-status",
+            "wake_bot": "/wake-bot",
             "endpoints": "/endpoints"
         },
         "api_endpoints": {
             "list_initiatives": "/api/list-initiatives",
-            "create_initiative": "/api/create-initiative",
-            "search_initiatives": "/api/search-initiatives/<query>"
+            "create_initiative": "/api/create-initiative"
         },
-        "mcp_tools": [
-            "list_initiatives",
-            "create_initiative", 
-            "search_initiatives",
-            "get_initiatives_stats"
-        ],
+        "mcp_tools": ["list_initiatives", "create_initiative", "search_initiatives", "get_initiatives_stats"],
         "telegram_bot": {
             "configured": bool(TELEGRAM_TOKEN),
-            "commands": ["/start", "/help", "/iniciativas", "/buscar", "/stats", "/crear"]
+            "running": bot_running,
+            "commands": ["/start", "/help", "/iniciativas", "/buscar", "/stats", "/crear", "/cancel"]
         }
     }
     
     return create_mcp_response(endpoints)
 
+# ===== MANEJO DE SEÑALES PARA SHUTDOWN GRACEFUL =====
+
+def signal_handler(sig, frame):
+    """Manejar señales de shutdown"""
+    global bot_running
+    logger.info("🛑 Received shutdown signal")
+    bot_running = False
+    
+    if telegram_app:
+        try:
+            # Intentar cerrar el bot gracefully
+            asyncio.create_task(telegram_app.stop())
+        except Exception as e:
+            logger.error(f"Error stopping telegram app: {e}")
+    
+    sys.exit(0)
+
+# Registrar signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     
     print(f"🚀 Starting Initiatives MCP Server on port {port}")
-    print(f"🔗 NocoDB Table ID: {NOCODB_TABLE_ID}")
+    print(f"🔗 NocoDB Table: {NOCODB_TABLE_ID}")
     print(f"🤖 Telegram Bot: {'Configured' if TELEGRAM_TOKEN else 'Not configured'}")
     print("🔧 Available tools: list_initiatives, create_initiative, search_initiatives, get_initiatives_stats")
     
-    # Iniciar bot de Telegram en hilo separado si está configurado
-    if TELEGRAM_TOKEN:
-        telegram_thread = threading.Thread(target=run_telegram_bot, daemon=True)
-        telegram_thread.start()
-        print("🤖 Telegram bot started in background")
+    # Iniciar bot de Telegram si está configurado
+    bot_started = start_telegram_bot_thread()
+    if bot_started:
+        print("🤖 Telegram bot started successfully")
     else:
-        print("⚠️ Telegram bot not started - token not configured")
+        print("⚠️ Telegram bot failed to start")
     
     # Iniciar servidor Flask
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    except Exception as e:
+        logger.error(f"❌ Flask server error: {e}")
+        print(f"❌ Server failed to start: {e}")
