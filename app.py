@@ -1,15 +1,10 @@
-# 🚀 MCP Server con Bot de Telegram - VERSIÓN ESTABLE PARA RENDER
+# 🚀 MCP Server con Bot de Telegram usando WEBHOOK (Compatible con Render)
 import os
 import json
-import threading
-import asyncio
-import time
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import requests
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import logging
 
 # Configuración de logging
@@ -28,11 +23,11 @@ NOCODB_BASE_URL = "https://nocodb.farmuhub.co/api/v2"
 NOCODB_TABLE_ID = "m274d90cy3x6ra3"
 NOCODB_TOKEN = "-kgNP5Q5G54nlDXPei7IO9PMMyE4pIgxYCi6o17Y"
 TELEGRAM_TOKEN = "8309791895:AAGxfmPQ_yvgNY-kyMMDrKR0srb7c20KL5Q"
+WEBHOOK_URL = "https://mpciniciativas.onrender.com"
 
 # Variables globales
-bot_running = False
-bot_start_time = None
 user_states = {}
+bot_configured = False
 
 def get_initiatives():
     """Obtener iniciativas de NocoDB"""
@@ -77,6 +72,52 @@ def create_initiative(data):
         logger.error(f"❌ Error creating initiative: {e}")
         return {"success": False, "error": str(e)}
 
+def send_telegram_message(chat_id, text, parse_mode=None):
+    """Enviar mensaje a Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text
+        }
+        if parse_mode:
+            data["parse_mode"] = parse_mode
+        
+        response = requests.post(url, json=data, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        logger.error(f"❌ Error sending message: {e}")
+        return False
+
+def setup_webhook():
+    """Configurar webhook de Telegram"""
+    try:
+        # Eliminar webhook existente
+        delete_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook"
+        requests.post(delete_url, timeout=10)
+        
+        # Configurar nuevo webhook
+        webhook_url = f"{WEBHOOK_URL}/telegram-webhook"
+        set_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+        data = {"url": webhook_url}
+        
+        response = requests.post(set_url, json=data, timeout=10)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("ok"):
+                logger.info(f"✅ Webhook configured: {webhook_url}")
+                return True
+            else:
+                logger.error(f"❌ Webhook setup failed: {result}")
+                return False
+        else:
+            logger.error(f"❌ Webhook HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Error setting up webhook: {e}")
+        return False
+
 # ===== ENDPOINTS FLASK =====
 
 @app.route('/')
@@ -89,8 +130,8 @@ def home():
         "timestamp": datetime.now().isoformat(),
         "telegram_bot": {
             "enabled": bool(TELEGRAM_TOKEN),
-            "running": bot_running,
-            "start_time": bot_start_time
+            "webhook_configured": bot_configured,
+            "webhook_url": f"{WEBHOOK_URL}/telegram-webhook" if TELEGRAM_TOKEN else None
         }
     })
 
@@ -105,11 +146,10 @@ def health():
         "services": {
             "flask": "running",
             "nocodb": "ok" if nocodb_test.get('success') else "error",
-            "telegram_bot": "running" if bot_running else "stopped"
+            "telegram_bot": "webhook_configured" if bot_configured else "not_configured"
         },
         "bot_info": {
-            "running": bot_running,
-            "start_time": bot_start_time,
+            "webhook_configured": bot_configured,
             "active_sessions": len(user_states)
         },
         "nocodb_info": {
@@ -118,67 +158,71 @@ def health():
         }
     })
 
-@app.route('/test')
-def test():
-    """Test del sistema"""
-    nocodb_test = get_initiatives()
-    
-    return jsonify({
-        "test": "OK",
-        "timestamp": datetime.now().isoformat(),
-        "nocodb_connection": "OK" if nocodb_test.get('success') else "FAILED",
-        "initiatives_count": len(nocodb_test.get('data', [])) if nocodb_test.get('success') else 0,
-        "telegram_bot_running": bot_running
-    })
-
-@app.route('/api/initiatives')
-def api_initiatives():
-    """API para obtener iniciativas"""
-    data = get_initiatives()
-    return jsonify(data)
-
-@app.route('/api/create', methods=['POST'])
-def api_create():
-    """API para crear iniciativa"""
-    if not request.json:
-        return jsonify({"error": "JSON required"}), 400
-    
-    result = create_initiative(request.json)
-    return jsonify(result)
-
-@app.route('/start-bot', methods=['POST'])
-def start_bot_endpoint():
-    """Endpoint para iniciar el bot manualmente"""
-    global bot_running
-    
-    if bot_running:
-        return jsonify({
-            "message": "Bot already running",
-            "bot_running": True,
-            "start_time": bot_start_time
-        })
+@app.route('/setup-webhook', methods=['POST'])
+def setup_webhook_endpoint():
+    """Endpoint para configurar webhook"""
+    global bot_configured
     
     try:
-        success = start_bot_thread()
+        success = setup_webhook()
+        bot_configured = success
+        
         return jsonify({
-            "message": "Bot start attempted",
             "success": success,
-            "bot_running": bot_running,
+            "webhook_configured": bot_configured,
+            "webhook_url": f"{WEBHOOK_URL}/telegram-webhook",
             "timestamp": datetime.now().isoformat()
         })
     except Exception as e:
-        logger.error(f"❌ Error starting bot via endpoint: {e}")
         return jsonify({
-            "message": "Failed to start bot",
+            "success": False,
             "error": str(e),
-            "bot_running": False
+            "timestamp": datetime.now().isoformat()
         }), 500
 
-# ===== BOT DE TELEGRAM =====
+@app.route('/telegram-webhook', methods=['POST'])
+def telegram_webhook():
+    """Webhook para recibir mensajes de Telegram"""
+    try:
+        update_data = request.get_json()
+        
+        if not update_data:
+            return "OK", 200
+        
+        # Procesar el mensaje
+        if 'message' in update_data:
+            message = update_data['message']
+            chat_id = message['chat']['id']
+            user_id = message['from']['id']
+            
+            # Comandos
+            if 'text' in message:
+                text = message['text'].strip()
+                
+                if text == '/start':
+                    handle_start_command(chat_id)
+                elif text == '/help':
+                    handle_help_command(chat_id)
+                elif text == '/iniciativas':
+                    handle_list_initiatives(chat_id)
+                elif text == '/crear':
+                    handle_create_command(chat_id, user_id)
+                elif text.startswith('/'):
+                    # Comando desconocido
+                    send_telegram_message(chat_id, "❓ Comando no reconocido. Usa /help para ver comandos disponibles.")
+                else:
+                    # Mensaje de texto - proceso de creación
+                    handle_text_message(chat_id, user_id, text)
+        
+        return "OK", 200
+        
+    except Exception as e:
+        logger.error(f"❌ Webhook error: {e}")
+        return "ERROR", 500
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /start"""
-    logger.info(f"📱 /start from user {update.effective_user.id}")
+def handle_start_command(chat_id):
+    """Manejar comando /start"""
+    logger.info(f"📱 /start from chat {chat_id}")
     
     text = """🎯 **Bot de Iniciativas Farmuhub**
 
@@ -191,15 +235,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ¿En qué puedo ayudarte?"""
     
-    try:
-        await update.message.reply_text(text, parse_mode='Markdown')
-        logger.info("✅ Start message sent")
-    except Exception as e:
-        logger.error(f"❌ Error sending start message: {e}")
+    send_telegram_message(chat_id, text, "Markdown")
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /help"""
-    logger.info(f"📱 /help from user {update.effective_user.id}")
+def handle_help_command(chat_id):
+    """Manejar comando /help"""
+    logger.info(f"📱 /help from chat {chat_id}")
     
     text = """🆘 **Ayuda**
 
@@ -212,27 +252,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 1. /iniciativas para ver la lista
 2. /crear para empezar a crear una nueva"""
     
-    try:
-        await update.message.reply_text(text, parse_mode='Markdown')
-        logger.info("✅ Help message sent")
-    except Exception as e:
-        logger.error(f"❌ Error sending help: {e}")
+    send_telegram_message(chat_id, text, "Markdown")
 
-async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /iniciativas"""
-    logger.info(f"📱 /iniciativas from user {update.effective_user.id}")
+def handle_list_initiatives(chat_id):
+    """Manejar comando /iniciativas"""
+    logger.info(f"📱 /iniciativas from chat {chat_id}")
     
     try:
         data = get_initiatives()
         
         if not data.get("success"):
-            await update.message.reply_text(f"❌ Error: {data.get('error')}")
+            send_telegram_message(chat_id, f"❌ Error: {data.get('error')}")
             return
         
         initiatives = data.get("data", [])[:8]
         
         if not initiatives:
-            await update.message.reply_text("📭 No hay iniciativas disponibles.")
+            send_telegram_message(chat_id, "📭 No hay iniciativas disponibles.")
             return
         
         text = f"🎯 **Iniciativas ({len(initiatives)})**\n\n"
@@ -244,41 +280,33 @@ async def list_initiatives_command(update: Update, context: ContextTypes.DEFAULT
             
             text += f"**{i}. {name}**\n👤 {owner} • 👥 {team}\n\n"
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        send_telegram_message(chat_id, text, "Markdown")
         logger.info(f"✅ Listed {len(initiatives)} initiatives")
         
     except Exception as e:
         logger.error(f"❌ Error listing initiatives: {e}")
-        await update.message.reply_text("❌ Error al obtener iniciativas.")
+        send_telegram_message(chat_id, "❌ Error al obtener iniciativas.")
 
-async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /crear"""
-    user_id = update.effective_user.id
+def handle_create_command(chat_id, user_id):
+    """Manejar comando /crear"""
     logger.info(f"📱 /crear from user {user_id}")
     
-    user_states[user_id] = {'step': 'name', 'data': {}}
+    user_states[user_id] = {'step': 'name', 'data': {}, 'chat_id': chat_id}
     
     text = """🆕 **Crear Nueva Iniciativa**
 
 **Paso 1 de 6:** ¿Cuál es el nombre de la iniciativa?"""
     
-    try:
-        await update.message.reply_text(text, parse_mode='Markdown')
-        logger.info(f"✅ Started creation for user {user_id}")
-    except Exception as e:
-        logger.error(f"❌ Error starting creation: {e}")
+    send_telegram_message(chat_id, text, "Markdown")
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manejar mensajes de texto"""
-    user_id = update.effective_user.id
-    
+def handle_text_message(chat_id, user_id, text):
+    """Manejar mensajes de texto para creación"""
     if user_id not in user_states:
-        await update.message.reply_text("👋 Usa /help para ver comandos disponibles.")
+        send_telegram_message(chat_id, "👋 Usa /help para ver comandos disponibles.")
         return
     
     state = user_states[user_id]
     step = state['step']
-    text = update.message.text.strip()
     
     logger.info(f"📝 Step '{step}' for user {user_id}")
     
@@ -310,18 +338,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         elif step == 'team':
             state['data']['team'] = text
-            await finish_creation(update, user_id)
+            finish_creation(chat_id, user_id)
             return
         
-        await update.message.reply_text(response, parse_mode='Markdown')
+        send_telegram_message(chat_id, response, "Markdown")
         
     except Exception as e:
         logger.error(f"❌ Error handling text: {e}")
-        await update.message.reply_text("❌ Error procesando respuesta.")
+        send_telegram_message(chat_id, "❌ Error procesando respuesta.")
         if user_id in user_states:
             del user_states[user_id]
 
-async def finish_creation(update: Update, user_id: int):
+def finish_creation(chat_id, user_id):
     """Finalizar creación"""
     try:
         state = user_states[user_id]
@@ -335,7 +363,7 @@ async def finish_creation(update: Update, user_id: int):
             'effort': 0.5
         })
         
-        await update.message.reply_text("⏳ Creando iniciativa...")
+        send_telegram_message(chat_id, "⏳ Creando iniciativa...")
         
         result = create_initiative(data)
         
@@ -344,7 +372,7 @@ async def finish_creation(update: Update, user_id: int):
         else:
             text = f"❌ **Error:** {result.get('error')}"
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        send_telegram_message(chat_id, text, "Markdown")
         
         if user_id in user_states:
             del user_states[user_id]
@@ -353,68 +381,37 @@ async def finish_creation(update: Update, user_id: int):
     
     except Exception as e:
         logger.error(f"❌ Error finishing creation: {e}")
-        await update.message.reply_text("❌ Error al crear iniciativa.")
+        send_telegram_message(chat_id, "❌ Error al crear iniciativa.")
         if user_id in user_states:
             del user_states[user_id]
 
-async def run_bot():
-    """Ejecutar bot con configuración simple y estable"""
-    global bot_running, bot_start_time
+@app.route('/test')
+def test():
+    """Test del sistema"""
+    nocodb_test = get_initiatives()
     
-    try:
-        logger.info("🤖 Starting Telegram bot...")
-        
-        # Crear aplicación con configuración mínima
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
-        
-        # Agregar handlers
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("help", help_command))
-        application.add_handler(CommandHandler("iniciativas", list_initiatives_command))
-        application.add_handler(CommandHandler("crear", create_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        
-        # Marcar como ejecutándose
-        bot_running = True
-        bot_start_time = datetime.now().isoformat()
-        
-        logger.info("🤖 Bot started successfully, starting polling...")
-        
-        # Ejecutar polling con configuración simple
-        await application.run_polling(
-            drop_pending_updates=True,
-            allowed_updates=['message']
-        )
-        
-    except Exception as e:
-        logger.error(f"❌ Bot error: {e}")
-        bot_running = False
-    
-    logger.info("🤖 Bot ended")
+    return jsonify({
+        "test": "OK",
+        "timestamp": datetime.now().isoformat(),
+        "nocodb_connection": "OK" if nocodb_test.get('success') else "FAILED",
+        "initiatives_count": len(nocodb_test.get('data', [])) if nocodb_test.get('success') else 0,
+        "telegram_webhook_configured": bot_configured
+    })
 
-def start_bot_thread():
-    """Iniciar bot en thread separado"""
-    def run():
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(run_bot())
-        except Exception as e:
-            logger.error(f"❌ Bot thread error: {e}")
-            global bot_running
-            bot_running = False
+@app.route('/api/initiatives')
+def api_initiatives():
+    """API para obtener iniciativas"""
+    data = get_initiatives()
+    return jsonify(data)
+
+@app.route('/api/create', methods=['POST'])
+def api_create():
+    """API para crear iniciativa"""
+    if not request.json:
+        return jsonify({"error": "JSON required"}), 400
     
-    if TELEGRAM_TOKEN:
-        try:
-            thread = threading.Thread(target=run, daemon=True)
-            thread.start()
-            logger.info("🤖 Bot thread started")
-            time.sleep(2)  # Dar tiempo para inicializar
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to start bot thread: {e}")
-            return False
-    return False
+    result = create_initiative(request.json)
+    return jsonify(result)
 
 # ===== INICIO =====
 
@@ -422,16 +419,7 @@ if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5000))
     
     print(f"🚀 Starting server on port {port}")
-    print(f"🤖 Telegram configured: {bool(TELEGRAM_TOKEN)}")
-    
-    # Iniciar bot automáticamente
-    if start_bot_thread():
-        print("🤖 Bot started automatically")
-        # Dar más tiempo para asegurar que se inicie
-        time.sleep(5)
-        print(f"🤖 Bot running: {bot_running}")
-    else:
-        print("⚠️ Bot failed to start automatically")
+    print(f"🤖 Telegram webhook will be available at: {WEBHOOK_URL}/telegram-webhook")
     
     # Iniciar Flask
     app.run(host='0.0.0.0', port=port, debug=False)
