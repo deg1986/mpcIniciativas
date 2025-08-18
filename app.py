@@ -915,7 +915,7 @@ def handle_text_message(chat_id, user_id, text):
             
         elif step == 'team':
             state['data']['team'] = text
-            await finish_creation(chat_id, user_id)
+            finish_creation(chat_id, user_id)
             return
         
         send_telegram_message(chat_id, response, "Markdown")
@@ -926,7 +926,7 @@ def handle_text_message(chat_id, user_id, text):
         if user_id in user_states:
             del user_states[user_id]
 
-async def finish_creation(chat_id, user_id):
+def finish_creation(chat_id, user_id):
     """Finalizar creación con sugerencias AI"""
     try:
         state = user_states[user_id]
