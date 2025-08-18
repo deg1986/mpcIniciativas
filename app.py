@@ -742,12 +742,363 @@ def handle_start_command(chat_id):
 **🏢 Saludia:** Marketplace que conecta droguerías independientes con sellers y laboratorios.
 
 **📋 Comandos principales:**
-/iniciativas - Ver todas las iniciativas + estadísticas
-/buscar <término> - Buscar iniciativas (info completa)
-/crear - Crear nueva iniciativa
-/analizar - Análisis AI del portfolio + métricas
+• `iniciativas` - Ver todas las iniciativas + estadísticas
+• `buscar <término>` - Buscar iniciativas (info completa)
+• `crear` - Crear nueva iniciativa
+• `analizar` - Análisis AI del portfolio + métricas
 
 **🔍 Ejemplos de búsqueda:**
-• `/buscar Product` - Iniciativas del equipo Product
-• `/buscar droguería` - Todo relacionado con droguerías
-• `/buscar API`
+• `buscar Product` - Iniciativas del equipo Product
+• `buscar droguería` - Todo relacionado con droguerías
+• `buscar API` - Iniciativas de API
+
+**💡 Tip:** No necesitas usar `/` - solo escribe la palabra.
+
+**🆘 Ayuda:** Escribe `ayuda` para ver todos los comandos."""
+    
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_help_command(chat_id):
+    """Manejar comando /help"""
+    logger.info(f"📱 /help from chat {chat_id}")
+    
+    text = """📚 **Comandos Disponibles**
+
+**📋 Gestión de Iniciativas:**
+• `iniciativas` o `/iniciativas` - Lista completa + estadísticas
+• `buscar <término>` o `/buscar` - Búsqueda detallada
+• `crear` o `/crear` - Nueva iniciativa (paso a paso)
+
+**📊 Análisis y Reportes:**
+• `analizar` o `/analizar` - Análisis AI + métricas del portfolio
+• `estadísticas` - Resumen estadístico rápido
+
+**🔍 Búsquedas Específicas:**
+• `buscar Product` - Por equipo
+• `buscar droguería` - Por término en descripción
+• `buscar Juan` - Por responsable
+• `buscar API` - Por tecnología/KPI
+
+**💡 Características:**
+✅ Búsqueda en nombre, descripción, owner, equipo, KPI
+✅ Estadísticas detalladas con porcentajes
+✅ Análisis estratégico con IA especializada en Saludia
+✅ Información completa de cada iniciativa
+
+**🤖 IA Especializada:**
+Nuestro asistente conoce el contexto de Saludia como marketplace farmacéutico y proporciona insights estratégicos específicos para equipos internos.
+
+**📞 Soporte:** Para más ayuda, contacta al equipo de Product."""
+    
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_list_initiatives(chat_id):
+    """Manejar comando para listar iniciativas"""
+    logger.info(f"📱 List initiatives from chat {chat_id}")
+    
+    # Obtener iniciativas
+    data = get_initiatives()
+    
+    if not data.get("success"):
+        send_telegram_message(chat_id, f"❌ Error obteniendo iniciativas: {data.get('error', 'Error desconocido')}")
+        return
+    
+    initiatives = data.get("data", [])
+    
+    if not initiatives:
+        send_telegram_message(chat_id, "📭 No hay iniciativas registradas.")
+        return
+    
+    # Calcular estadísticas
+    stats = calculate_statistics(initiatives)
+    
+    # Enviar estadísticas primero
+    stats_text = format_statistics_text(stats)
+    send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
+    
+    # Enviar lista resumida
+    text = f"📋 **LISTA DE INICIATIVAS** (Resumen)\n\n"
+    
+    # Agrupar por equipos para mejor organización
+    teams = {}
+    for init in initiatives:
+        team = init.get('team', 'Sin equipo')
+        if team not in teams:
+            teams[team] = []
+        teams[team].append(init)
+    
+    counter = 1
+    for team, team_initiatives in teams.items():
+        text += f"👥 **{team.upper()}:**\n"
+        for init in team_initiatives:
+            formatted = format_initiative_summary(init, counter)
+            text += f"{formatted}\n\n"
+            counter += 1
+    
+    text += f"💡 **Tip:** Usa `buscar <término>` para información completa de iniciativas específicas."
+    
+    # Enviar en chunks si es muy largo
+    if len(text) > 4000:
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            send_telegram_message(chat_id, chunk, parse_mode='Markdown')
+    else:
+        send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_search_command(chat_id, query):
+    """Manejar comando de búsqueda"""
+    logger.info(f"📱 Search '{query}' from chat {chat_id}")
+    
+    result = search_initiatives(query)
+    
+    if not result.get("success"):
+        send_telegram_message(chat_id, f"❌ Error en búsqueda: {result.get('error', 'Error desconocido')}")
+        return
+    
+    results = result.get("results", [])
+    total = result.get("total", 0)
+    
+    if not results:
+        # Sugerir búsquedas alternativas
+        suggestions_text = f"""🔍 **Sin resultados para:** "{query}"
+
+**💡 Sugerencias:**
+• Verifica la ortografía
+• Usa términos más generales
+• Prueba buscar por:
+  - Equipo: `buscar Product`
+  - Owner: `buscar Juan`
+  - Tecnología: `buscar API`
+  - Portal: `buscar droguería`
+
+**📋 ¿Prefieres ver todas las iniciativas?**
+Escribe: `iniciativas`"""
+        
+        send_telegram_message(chat_id, suggestions_text, parse_mode='Markdown')
+        return
+    
+    # Enviar resultados con información COMPLETA
+    text = f"🔍 **RESULTADOS DE BÚSQUEDA**\n"
+    text += f"**Término:** {query}\n"
+    text += f"**Encontrados:** {total} iniciativa(s)\n\n"
+    
+    # Mostrar hasta 5 resultados completos
+    for i, init in enumerate(results[:5], 1):
+        formatted = format_initiative_complete(init, i)
+        text += f"{formatted}\n\n"
+    
+    if total > 5:
+        text += f"📝 **Nota:** Se muestran las primeras 5 de {total} iniciativas encontradas.\n"
+        text += f"Refina tu búsqueda para resultados más específicos."
+    
+    # Enviar en chunks si es muy largo
+    if len(text) > 4000:
+        chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        for chunk in chunks:
+            send_telegram_message(chat_id, chunk, parse_mode='Markdown')
+    else:
+        send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_analyze_command(chat_id):
+    """Manejar comando de análisis"""
+    logger.info(f"📱 Analyze command from chat {chat_id}")
+    
+    send_telegram_message(chat_id, "🤖 **Analizando portfolio de iniciativas...**\n\nEsto puede tomar unos segundos.", parse_mode='Markdown')
+    
+    # Obtener iniciativas
+    data = get_initiatives()
+    
+    if not data.get("success"):
+        send_telegram_message(chat_id, f"❌ Error obteniendo datos: {data.get('error', 'Error desconocido')}")
+        return
+    
+    initiatives = data.get("data", [])
+    
+    if not initiatives:
+        send_telegram_message(chat_id, "📭 No hay iniciativas para analizar.")
+        return
+    
+    # Enviar estadísticas primero
+    stats = calculate_statistics(initiatives)
+    stats_text = format_statistics_text(stats)
+    send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
+    
+    # Análisis con IA
+    if GROQ_API_KEY:
+        analysis = analyze_initiatives_with_llm(initiatives)
+        
+        analysis_text = f"🤖 **ANÁLISIS ESTRATÉGICO CON IA**\n\n{analysis}"
+        
+        # Enviar en chunks si es muy largo
+        if len(analysis_text) > 4000:
+            chunks = [analysis_text[i:i+4000] for i in range(0, len(analysis_text), 4000)]
+            for chunk in chunks:
+                send_telegram_message(chat_id, chunk, parse_mode='Markdown')
+        else:
+            send_telegram_message(chat_id, analysis_text, parse_mode='Markdown')
+    else:
+        send_telegram_message(chat_id, "⚠️ Análisis con IA no disponible. Configuración pendiente.", parse_mode='Markdown')
+
+def handle_create_command(chat_id, user_id):
+    """Iniciar proceso de creación de iniciativa"""
+    logger.info(f"📱 Create command from chat {chat_id}, user {user_id}")
+    
+    # Inicializar estado del usuario
+    user_states[user_id] = {
+        'step': 'name',
+        'data': {},
+        'chat_id': chat_id
+    }
+    
+    text = """🆕 **CREAR NUEVA INICIATIVA**
+
+📝 **Paso 1/6:** Nombre de la iniciativa
+
+Por favor, envía el nombre de la nueva iniciativa.
+
+**Ejemplos:**
+• "Integración API de pagos"
+• "Optimización del checkout"
+• "Dashboard analytics v2"
+
+💡 **Tip:** Usa un nombre descriptivo y específico."""
+    
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_text_message(chat_id, user_id, text):
+    """Manejar mensajes de texto durante el proceso de creación"""
+    if user_id not in user_states:
+        return
+    
+    state = user_states[user_id]
+    step = state['step']
+    
+    try:
+        if step == 'name':
+            state['data']['initiative_name'] = text
+            state['step'] = 'description'
+            send_telegram_message(chat_id, """📝 **Paso 2/6:** Descripción
+
+Describe qué hace esta iniciativa y cuál es su objetivo.
+
+**Ejemplo:**
+"Implementar sistema de pagos con PSE y tarjetas para mejorar conversión en el checkout de droguerías."
+
+💡 **Tip:** Incluye el problema que resuelve y el beneficio esperado.""", parse_mode='Markdown')
+        
+        elif step == 'description':
+            state['data']['description'] = text
+            state['step'] = 'owner'
+            send_telegram_message(chat_id, """👤 **Paso 3/6:** Responsable
+
+¿Quién es el owner/responsable principal de esta iniciativa?
+
+**Ejemplo:**
+• "Juan Pérez"
+• "María García"
+• "Carlos Rodriguez"
+
+💡 **Tip:** Nombre completo de la persona responsable.""", parse_mode='Markdown')
+        
+        elif step == 'owner':
+            state['data']['owner'] = text
+            state['step'] = 'team'
+            send_telegram_message(chat_id, """👥 **Paso 4/6:** Equipo
+
+¿A qué equipo pertenece esta iniciativa?
+
+**Opciones comunes:**
+• Product
+• Engineering
+• Operations
+• Sales
+• Marketing
+• Customer Success
+• Data/Analytics
+
+💡 **Tip:** Usa el nombre oficial del equipo.""", parse_mode='Markdown')
+        
+        elif step == 'team':
+            state['data']['team'] = text
+            state['step'] = 'kpi'
+            send_telegram_message(chat_id, """📊 **Paso 5/6:** KPI Principal
+
+¿Cuál es el KPI o métrica principal que impacta esta iniciativa?
+
+**Ejemplos:**
+• "Conversion Rate"
+• "GMV"
+• "User Retention"
+• "API Response Time"
+• "Customer Satisfaction"
+• "Monthly Active Users"
+
+💡 **Tip:** El KPI más importante que mide el éxito.""", parse_mode='Markdown')
+        
+        elif step == 'kpi':
+            state['data']['main_kpi'] = text
+            state['step'] = 'portal'
+            send_telegram_message(chat_id, """🖥️ **Paso 6/6:** Portal/Producto
+
+¿En qué portal o producto se implementa?
+
+**Opciones comunes:**
+• "Portal Droguería"
+• "Portal Seller"
+• "Admin Dashboard"
+• "Mobile App"
+• "API/Backend"
+• "Interno"
+
+💡 **Tip:** Dónde verán/usarán los usuarios esta iniciativa.""", parse_mode='Markdown')
+        
+        elif step == 'portal':
+            state['data']['portal'] = text
+            
+            # Crear la iniciativa
+            create_result = create_initiative(state['data'])
+            
+            if create_result.get('success'):
+                # Formatear confirmación
+                data = state['data']
+                confirmation = f"""✅ **INICIATIVA CREADA EXITOSAMENTE**
+
+🎯 **{data['initiative_name']}**
+
+📝 **Descripción:** {data['description']}
+👤 **Responsable:** {data['owner']}
+👥 **Equipo:** {data['team']}
+📊 **KPI Principal:** {data['main_kpi']}
+🖥️ **Portal:** {data['portal']}
+
+🔗 La iniciativa ha sido agregada a la base de datos.
+
+💡 **Próximos pasos:**
+• Puedes buscarla con: `buscar {data['initiative_name']}`
+• Ver todas: `iniciativas`
+• Crear otra: `crear`"""
+                
+                send_telegram_message(chat_id, confirmation, parse_mode='Markdown')
+            else:
+                send_telegram_message(chat_id, f"❌ Error creando iniciativa: {create_result.get('error', 'Error desconocido')}\n\n💡 Prueba nuevamente con: `crear`", parse_mode='Markdown')
+            
+            # Limpiar estado
+            del user_states[user_id]
+    
+    except Exception as e:
+        logger.error(f"Error in text message handling: {e}")
+        send_telegram_message(chat_id, "❌ Error procesando tu mensaje. Inténtalo nuevamente.", parse_mode='Markdown')
+        if user_id in user_states:
+            del user_states[user_id]
+
+# ===== MAIN =====
+
+if __name__ == '__main__':
+    # Configurar webhook al iniciar
+    if TELEGRAM_TOKEN:
+        bot_configured = setup_webhook()
+        logger.info(f"🤖 Bot webhook configured: {bot_configured}")
+    
+    # Ejecutar Flask
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
