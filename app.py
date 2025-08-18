@@ -660,37 +660,76 @@ def telegram_webhook():
             user_id = message['from']['id']
             
             if 'text' in message:
-                text = message['text'].strip()
+                text = message['text'].strip().lower()  # Convertir a minúsculas
                 
-                if text == '/start':
+                # Comandos con y SIN barra diagonal (más user-friendly)
+                if text in ['/start', 'start', 'inicio', 'hola', 'empezar']:
                     handle_start_command(chat_id)
-                elif text == '/help':
+                elif text in ['/help', 'help', 'ayuda', 'comandos']:
                     handle_help_command(chat_id)
-                elif text == '/iniciativas':
+                elif text in ['/iniciativas', 'iniciativas', 'lista', 'ver iniciativas', 'mostrar iniciativas']:
                     handle_list_initiatives(chat_id)
-                elif text == '/crear':
+                elif text in ['/crear', 'crear', 'nueva iniciativa', 'crear iniciativa', 'agregar']:
                     handle_create_command(chat_id, user_id)
-                elif text == '/analizar' or text == '/analyze':
+                elif text in ['/analizar', 'analizar', 'analyze', 'análisis', 'estadísticas', 'estadisticas']:
                     handle_analyze_command(chat_id)
-                elif text.startswith('/buscar ') or text.startswith('/search '):
-                    query = text.split(' ', 1)[1] if ' ' in text else ""
+                elif (text.startswith('/buscar ') or text.startswith('buscar ') or 
+                      text.startswith('search ') or text.startswith('encontrar ')):
+                    # Extraer término de búsqueda
+                    if text.startswith('/'):
+                        query = text.split(' ', 1)[1] if ' ' in text else ""
+                    else:
+                        query = text.split(' ', 1)[1] if ' ' in text else ""
+                    
                     if query:
                         handle_search_command(chat_id, query)
                     else:
-                        send_telegram_message(chat_id, "❓ Uso: /buscar <término>\n\nEjemplo: /buscar Product")
+                        send_telegram_message(chat_id, "🔍 **¿Qué quieres buscar?**\n\nEjemplos:\n• `buscar Product`\n• `buscar API`\n• `buscar Juan`")
                 elif text.startswith('/'):
-                    send_telegram_message(chat_id, "❓ Comando no reconocido. Usa /help para ver comandos disponibles.")
+                    # Comando con / no reconocido
+                    send_telegram_message(chat_id, "❓ Comando no reconocido. Escribe `ayuda` para ver opciones disponibles.")
                 else:
+                    # Mensaje de texto normal
                     if user_id in user_states:
-                        handle_text_message(chat_id, user_id, text)
+                        # Proceso de creación activo
+                        handle_text_message(chat_id, user_id, message['text'])  # Usar texto original
                     else:
-                        send_telegram_message(chat_id, "👋 Usa /help para ver comandos disponibles.")
+                        # Respuesta inteligente para texto libre
+                        handle_natural_message(chat_id, text)
         
         return "OK", 200
         
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
         return "ERROR", 500
+
+def handle_natural_message(chat_id, text):
+    """Manejar mensajes en lenguaje natural"""
+    text_lower = text.lower()
+    
+    # Palabras clave para comandos
+    if any(word in text_lower for word in ['iniciativa', 'proyecto', 'lista', 'ver', 'mostrar']):
+        send_telegram_message(chat_id, "🎯 ¿Quieres ver las iniciativas?\n\nEscribe: `iniciativas`")
+    elif any(word in text_lower for word in ['buscar', 'encontrar', 'busco', 'dónde']):
+        send_telegram_message(chat_id, "🔍 ¿Qué quieres buscar?\n\nEjemplos:\n• `buscar Product`\n• `buscar API`\n• `buscar droguería`")
+    elif any(word in text_lower for word in ['crear', 'nueva', 'agregar', 'añadir']):
+        send_telegram_message(chat_id, "🆕 ¿Quieres crear una nueva iniciativa?\n\nEscribe: `crear`")
+    elif any(word in text_lower for word in ['análisis', 'analizar', 'estadística', 'resumen']):
+        send_telegram_message(chat_id, "📊 ¿Quieres ver el análisis del portfolio?\n\nEscribe: `analizar`")
+    elif any(word in text_lower for word in ['ayuda', 'help', 'comando', 'opciones']):
+        handle_help_command(chat_id)
+    else:
+        # Respuesta general amigable
+        send_telegram_message(chat_id, """👋 **¡Hola!** No estoy seguro de qué necesitas.
+
+**Opciones disponibles:**
+• `iniciativas` - Ver todas las iniciativas
+• `buscar <término>` - Buscar algo específico  
+• `crear` - Nueva iniciativa
+• `analizar` - Estadísticas y análisis
+• `ayuda` - Ver todos los comandos
+
+💡 **Tip:** No necesitas usar `/` - solo escribe la palabra.""")
 
 def handle_start_command(chat_id):
     """Manejar comando /start"""
