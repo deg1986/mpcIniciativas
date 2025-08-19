@@ -604,32 +604,14 @@ def format_initiative_complete(initiative, index=None):
         
         prefix = f"**{index}.** " if index else ""
         
-        # Formato COMPLETO para búsquedas
-        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score_val})
-
-📝 **Descripción:**
-{description}
-
-👤 **Responsable:** {owner}
-👥 **Equipo:** {team}
-📊 **KPI Principal:** {kpi}
-🖥️ **Portal:** {portal}
-📋 **Status:** {status}
-
-📈 **Métricas RICE:**
-• Alcance: {reach_pct}
-• Impacto: {impact_val}
-• Confianza: {confidence_pct}
-• Esfuerzo: {effort_val}
-• **Score RICE: {score_val}**
-
-━━━━━━━━━━━━━━━━━━━━━"""
+        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score:.2f})
+👤 {owner} | 👥 {team} | 📊 {kpi} | 📋 {status}"""
         
         return formatted
         
     except Exception as e:
-        logger.error(f"Error formatting initiative summary: {e}")
-        return f"{index}. **{initiative.get('initiative_name', 'Error')}**"
+        logger.error(f"Error formatting initiative: {e}")
+        return f"{index}. **{initiative.get('initiative_name', 'Error de formato')}**"
 
 def send_telegram_message(chat_id, text, parse_mode=None):
     """Enviar mensaje a Telegram"""
@@ -1438,9 +1420,34 @@ if __name__ == '__main__':
     
     # Ejecutar Flask
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False) Exception as e:
-        logger.error(f"Error formatting initiative: {e}")
-        return f"{index}. **{initiative.get('initiative_name', 'Error de formato')}**"
+    app.run(host='0.0.0.0', port=port, debug=False)}.** " if index else ""
+        
+        # Formato COMPLETO para búsquedas
+        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score_val})
+
+📝 **Descripción:**
+{description}
+
+👤 **Responsable:** {owner}
+👥 **Equipo:** {team}
+📊 **KPI Principal:** {kpi}
+🖥️ **Portal:** {portal}
+📋 **Status:** {status}
+
+📈 **Métricas RICE:**
+• Alcance: {reach_pct}
+• Impacto: {impact_val}
+• Confianza: {confidence_pct}
+• Esfuerzo: {effort_val}
+• **Score RICE: {score_val}**
+
+━━━━━━━━━━━━━━━━━━━━━"""
+        
+        return formatted
+        
+    except Exception as e:
+        logger.error(f"Error formatting initiative summary: {e}")
+        return f"{index}. **{initiative.get('initiative_name', 'Error')}**"
 
 def format_initiative_summary(initiative, index=None):
     """Formatear iniciativa en modo resumen para listados con score"""
@@ -1460,11 +1467,4 @@ def format_initiative_summary(initiative, index=None):
         # Emoji de prioridad basado en score
         priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
         
-        prefix = f"**{index}.** " if index else ""
-        
-        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score:.2f})
-👤 {owner} | 👥 {team} | 📊 {kpi} | 📋 {status}"""
-        
-        return formatted
-        
-    except
+        prefix = f"**{index
