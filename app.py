@@ -1431,10 +1431,12 @@ Envía un número decimal.
 # ===== MAIN =====
 
 if __name__ == '__main__':
+    # Configurar webhook al iniciar
     if TELEGRAM_TOKEN:
         bot_configured = setup_webhook()
         logger.info(f"🤖 Bot webhook configured: {bot_configured}")
     
+    # Ejecutar Flask
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False) Exception as e:
         logger.error(f"Error formatting initiative: {e}")
