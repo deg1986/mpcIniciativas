@@ -55,9 +55,126 @@ def get_initiatives():
         logger.error(f"❌ Error fetching initiatives: {e}")
         return {"success": False, "error": str(e)}
 
-def create_initiative(data):
-    """Crear iniciativa en NocoDB"""
+def validate_initiative_data(data):
+    """Validar datos de iniciativa según esquema de DB"""
+    errors = []
+    
+    # Campos requeridos
+    required_fields = ['initiative_name', 'description', 'portal', 'owner', 'team', 'reach', 'impact', 'confidence']
+    
+    for field in required_fields:
+        if field not in data or not data[field]:
+            errors.append(f"Campo '{field}' es requerido")
+    
+    if errors:
+        return {"valid": False, "errors": errors}
+    
+    # Validar longitudes
+    if len(data['initiative_name']) > 255:
+        errors.append("Nombre de iniciativa debe tener máximo 255 caracteres")
+    
+    if len(data['description']) > 1000:
+        errors.append("Descripción debe tener máximo 1000 caracteres")
+    
+    if data.get('main_kpi') and len(data['main_kpi']) > 255:
+        errors.append("KPI principal debe tener máximo 255 caracteres")
+    
+    if len(data['owner']) > 100:
+        errors.append("Owner debe tener máximo 100 caracteres")
+    
+    # Validar enums
+    valid_portals = ['Seller', 'Droguista', 'Admin']
+    if data['portal'] not in valid_portals:
+        errors.append(f"Portal debe ser uno de: {', '.join(valid_portals)}")
+    
+    valid_teams = ['Product', 'Sales', 'Ops', 'CS', 'Controlling', 'Growth']
+    if data['team'] not in valid_teams:
+        errors.append(f"Equipo debe ser uno de: {', '.join(valid_teams)}")
+    
+    # Validar reach (0-1)
     try:
+        reach = float(data['reach'])
+        if reach < 0 or reach > 1:
+            errors.append("Reach debe estar entre 0 y 1")
+        data['reach'] = reach
+    except (ValueError, TypeError):
+        errors.append("Reach debe ser un número entre 0 y 1")
+    
+    # Validar impact (1, 2, 3)
+    try:
+        impact = int(data['impact'])
+        if impact not in [1, 2, 3]:
+            errors.append("Impact debe ser 1, 2 o 3")
+        data['impact'] = impact
+    except (ValueError, TypeError):
+        errors.append("Impact debe ser 1, 2 o 3")
+    
+    # Validar confidence (0-1)
+    try:
+        confidence = float(data['confidence'])
+        if confidence < 0 or confidence > 1:
+            errors.append("Confidence debe estar entre 0 y 1")
+        data['confidence'] = confidence
+    except (ValueError, TypeError):
+        errors.append("Confidence debe ser un número entre 0 y 1")
+    
+    # Validar effort (opcional, default 1)
+    if 'effort' in data:
+        try:
+            effort = float(data['effort'])
+            if effort <= 0:
+                errors.append("Effort debe ser mayor a 0")
+            data['effort'] = effort
+        except (ValueError, TypeError):
+            errors.append("Effort debe ser un número mayor a 0")
+    else:
+        data['effort'] = 1.0  # Default value
+    
+    # Validar must_have (opcional, default False)
+    if 'must_have' in data:
+        if isinstance(data['must_have'], str):
+            data['must_have'] = data['must_have'].lower() in ['true', '1', 'yes', 'sí']
+        else:
+            data['must_have'] = bool(data['must_have'])
+    else:
+        data['must_have'] = False
+    
+    return {"valid": len(errors) == 0, "errors": errors, "data": data}
+
+def create_initiative(data):
+    """Crear iniciativa en NocoDB con validaciones"""
+    try:
+        # Validar datos
+        validation_result = validate_initiative_data(data)
+        
+        if not validation_result["valid"]:
+            return {
+                "success": False, 
+                "error": "Datos inválidos", 
+                "validation_errors": validation_result["errors"]
+            }
+        
+        validated_data = validation_result["data"]
+        
+        # Preparar datos para NocoDB (solo campos permitidos)
+        nocodb_data = {
+            "initiative_name": validated_data["initiative_name"],
+            "description": validated_data["description"],
+            "portal": validated_data["portal"],
+            "owner": validated_data["owner"],
+            "team": validated_data["team"],
+            "reach": validated_data["reach"],
+            "impact": validated_data["impact"],
+            "confidence": validated_data["confidence"],
+            "effort": validated_data["effort"],
+            "must_have": validated_data["must_have"]
+        }
+        
+        # Agregar main_kpi solo si está presente
+        if validated_data.get("main_kpi"):
+            nocodb_data["main_kpi"] = validated_data["main_kpi"]
+        
+        # Hacer petición a NocoDB
         url = f"{NOCODB_BASE_URL}/tables/{NOCODB_TABLE_ID}/records"
         headers = {
             'accept': 'application/json',
@@ -65,14 +182,14 @@ def create_initiative(data):
             'Content-Type': 'application/json'
         }
         
-        response = requests.post(url, headers=headers, json=data, timeout=20)
+        response = requests.post(url, headers=headers, json=nocodb_data, timeout=20)
         
         if response.status_code in [200, 201]:
-            logger.info(f"✅ Created initiative: {data.get('initiative_name', 'Unknown')}")
+            logger.info(f"✅ Created initiative: {validated_data.get('initiative_name', 'Unknown')}")
             return {"success": True, "data": response.json()}
         else:
-            logger.error(f"❌ Create failed HTTP {response.status_code}")
-            return {"success": False, "error": f"HTTP {response.status_code}"}
+            logger.error(f"❌ Create failed HTTP {response.status_code}: {response.text}")
+            return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
     except Exception as e:
         logger.error(f"❌ Error creating initiative: {e}")
         return {"success": False, "error": str(e)}
@@ -137,9 +254,9 @@ def calculate_statistics(initiatives):
     if metric_count > 0:
         avg_metrics = {
             'reach': (total_reach / metric_count) * 100,
-            'impact': (total_impact / metric_count) * 100,
+            'impact': (total_impact / metric_count),
             'confidence': (total_confidence / metric_count) * 100,
-            'effort': (total_effort / metric_count) * 100
+            'effort': (total_effort / metric_count)
         }
     
     return {
@@ -184,9 +301,9 @@ def format_statistics_text(stats):
         text += f"\n📊 **MÉTRICAS PROMEDIO:**\n"
         metrics = stats['average_metrics']
         text += f"• Alcance: {metrics.get('reach', 0):.1f}%\n"
-        text += f"• Impacto: {metrics.get('impact', 0):.1f}%\n"
+        text += f"• Impacto: {metrics.get('impact', 0):.1f}/3\n"
         text += f"• Confianza: {metrics.get('confidence', 0):.1f}%\n"
-        text += f"• Esfuerzo: {metrics.get('effort', 0):.1f}%\n"
+        text += f"• Esfuerzo: {metrics.get('effort', 0):.1f} sprints\n"
     
     return text
 
@@ -254,12 +371,11 @@ def query_llm(prompt, context=None):
 
 👥 EQUIPOS INTERNOS:
 - Product: Desarrollo de funcionalidades del marketplace
-- Engineering: Infraestructura técnica y APIs
-- Operations: Gestión operacional y fulfillment
 - Sales: Acquisition de droguerías y sellers
-- Marketing: Growth y retención
-- Customer Success: Soporte y satisfacción
-- Data/Analytics: Business intelligence
+- Ops: Gestión operacional y fulfillment
+- CS: Customer Success y soporte
+- Controlling: Control financiero y métricas
+- Growth: Marketing y crecimiento
 
 🎯 TU EXPERTISE:
 - Análisis de portfolio de iniciativas
@@ -340,9 +456,9 @@ def analyze_initiatives_with_llm(initiatives):
         context += f"\n📈 MÉTRICAS PROMEDIO:\n"
         metrics = stats['average_metrics']
         context += f"• Alcance: {metrics.get('reach', 0):.1f}%\n"
-        context += f"• Impacto: {metrics.get('impact', 0):.1f}%\n"
+        context += f"• Impacto: {metrics.get('impact', 0):.1f}/3\n"
         context += f"• Confianza: {metrics.get('confidence', 0):.1f}%\n"
-        context += f"• Esfuerzo: {metrics.get('effort', 0):.1f}%\n"
+        context += f"• Esfuerzo: {metrics.get('effort', 0):.1f} sprints\n"
     
     # Agregar detalles de iniciativas por equipo
     teams = {}
@@ -384,27 +500,31 @@ def format_initiative_complete(initiative, index=None):
         team = initiative.get('team', 'Sin equipo')
         kpi = initiative.get('main_kpi', 'Sin KPI')
         portal = initiative.get('portal', 'Sin portal')
+        status = initiative.get('status', 'Pending')
         
         # Métricas con validación
         reach = initiative.get('reach', 0)
         impact = initiative.get('impact', 0)
         confidence = initiative.get('confidence', 0)
-        effort = initiative.get('effort', 0)
+        effort = initiative.get('effort', 1)
+        score = initiative.get('score', 0)
         
         # Convertir a números si es posible
         try:
             reach = float(reach) if reach else 0
             impact = float(impact) if impact else 0
             confidence = float(confidence) if confidence else 0
-            effort = float(effort) if effort else 0
+            effort = float(effort) if effort else 1
+            score = float(score) if score else 0
         except:
-            reach = impact = confidence = effort = 0
+            reach = impact = confidence = effort = score = 0
         
-        # Formatear métricas como porcentajes
+        # Formatear métricas
         reach_pct = f"{reach*100:.0f}%" if reach > 0 else "N/A"
-        impact_pct = f"{impact*100:.0f}%" if impact > 0 else "N/A"
+        impact_val = f"{impact:.0f}/3" if impact > 0 else "N/A"
         confidence_pct = f"{confidence*100:.0f}%" if confidence > 0 else "N/A"
-        effort_pct = f"{effort*100:.0f}%" if effort > 0 else "N/A"
+        effort_val = f"{effort:.1f} sprints" if effort > 0 else "N/A"
+        score_val = f"{score:.2f}" if score > 0 else "N/A"
         
         prefix = f"**{index}.** " if index else ""
         
@@ -417,13 +537,15 @@ def format_initiative_complete(initiative, index=None):
 👤 **Responsable:** {owner}
 👥 **Equipo:** {team}
 📊 **KPI Principal:** {kpi}
-🖥️ **Portal/Producto:** {portal}
+🖥️ **Portal:** {portal}
+📋 **Status:** {status}
 
-📈 **Métricas de Iniciativa:**
+📈 **Métricas RICE:**
 • Alcance: {reach_pct}
-• Impacto: {impact_pct}
+• Impacto: {impact_val}
 • Confianza: {confidence_pct}
-• Esfuerzo: {effort_pct}
+• Esfuerzo: {effort_val}
+• **Score:** {score_val}
 
 ━━━━━━━━━━━━━━━━━━━━━"""
         
@@ -440,11 +562,12 @@ def format_initiative_summary(initiative, index=None):
         owner = initiative.get('owner', 'Sin owner')
         team = initiative.get('team', 'Sin equipo')
         kpi = initiative.get('main_kpi', 'Sin KPI')
+        status = initiative.get('status', 'Pending')
         
         prefix = f"**{index}.** " if index else ""
         
         formatted = f"""{prefix}🎯 **{name}**
-👤 {owner} | 👥 {team} | 📊 {kpi}"""
+👤 {owner} | 👥 {team} | 📊 {kpi} | 📋 {status}"""
         
         return formatted
         
@@ -503,11 +626,11 @@ def home():
     """Endpoint principal"""
     return jsonify({
         "name": "Saludia Initiatives MCP Server",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "status": "running",
         "timestamp": datetime.now().isoformat(),
         "company": "Saludia Marketplace",
-        "description": "Sistema de gestión de iniciativas con estadísticas avanzadas",
+        "description": "Sistema de gestión de iniciativas con validaciones y estadísticas avanzadas",
         "telegram_bot": {
             "enabled": bool(TELEGRAM_TOKEN),
             "webhook_configured": bot_configured,
@@ -523,8 +646,16 @@ def home():
             "detailed_search_with_descriptions",
             "advanced_statistics_with_percentages",
             "team_and_owner_analytics",
-            "ai_strategic_analysis"
-        ]
+            "ai_strategic_analysis",
+            "complete_data_validation",
+            "rice_scoring_system"
+        ],
+        "database_schema": {
+            "required_fields": ["initiative_name", "description", "portal", "owner", "team", "reach", "impact", "confidence"],
+            "valid_portals": ["Seller", "Droguista", "Admin"],
+            "valid_teams": ["Product", "Sales", "Ops", "CS", "Controlling", "Growth"],
+            "auto_fields": ["id", "score", "status", "created_at", "updated_at"]
+        }
     })
 
 @app.route('/health')
@@ -744,7 +875,7 @@ def handle_start_command(chat_id):
 **📋 Comandos principales:**
 • `iniciativas` - Ver todas las iniciativas + estadísticas
 • `buscar <término>` - Buscar iniciativas (info completa)
-• `crear` - Crear nueva iniciativa
+• `crear` - Crear nueva iniciativa con validaciones
 • `analizar` - Análisis AI del portfolio + métricas
 
 **🔍 Ejemplos de búsqueda:**
@@ -765,12 +896,12 @@ def handle_help_command(chat_id):
     text = """📚 **Comandos Disponibles**
 
 **📋 Gestión de Iniciativas:**
-• `iniciativas` o `/iniciativas` - Lista completa + estadísticas
-• `buscar <término>` o `/buscar` - Búsqueda detallada
-• `crear` o `/crear` - Nueva iniciativa (paso a paso)
+• `iniciativas` - Lista completa + estadísticas
+• `buscar <término>` - Búsqueda detallada
+• `crear` - Nueva iniciativa (8 pasos con validaciones)
 
 **📊 Análisis y Reportes:**
-• `analizar` o `/analizar` - Análisis AI + métricas del portfolio
+• `analizar` - Análisis AI + métricas del portfolio
 • `estadísticas` - Resumen estadístico rápido
 
 **🔍 Búsquedas Específicas:**
@@ -779,11 +910,12 @@ def handle_help_command(chat_id):
 • `buscar Juan` - Por responsable
 • `buscar API` - Por tecnología/KPI
 
-**💡 Características:**
-✅ Búsqueda en nombre, descripción, owner, equipo, KPI
-✅ Estadísticas detalladas con porcentajes
-✅ Análisis estratégico con IA especializada en Saludia
-✅ Información completa de cada iniciativa
+**💡 Características Nuevas:**
+✅ Validaciones completas según DB schema
+✅ Métricas RICE (Reach, Impact, Confidence, Effort)
+✅ Score automático calculado
+✅ Equipos: Product, Sales, Ops, CS, Controlling, Growth
+✅ Portales: Seller, Droguista, Admin
 
 **🤖 IA Especializada:**
 Nuestro asistente conoce el contexto de Saludia como marketplace farmacéutico y proporciona insights estratégicos específicos para equipos internos.
@@ -940,7 +1072,7 @@ def handle_analyze_command(chat_id):
         send_telegram_message(chat_id, "⚠️ Análisis con IA no disponible. Configuración pendiente.", parse_mode='Markdown')
 
 def handle_create_command(chat_id, user_id):
-    """Iniciar proceso de creación de iniciativa"""
+    """Iniciar proceso de creación de iniciativa con validaciones"""
     logger.info(f"📱 Create command from chat {chat_id}, user {user_id}")
     
     # Inicializar estado del usuario
@@ -952,9 +1084,9 @@ def handle_create_command(chat_id, user_id):
     
     text = """🆕 **CREAR NUEVA INICIATIVA**
 
-📝 **Paso 1/6:** Nombre de la iniciativa
+📝 **Paso 1/8:** Nombre de la iniciativa
 
-Por favor, envía el nombre de la nueva iniciativa.
+Por favor, envía el nombre de la nueva iniciativa (máximo 255 caracteres).
 
 **Ejemplos:**
 • "Integración API de pagos"
@@ -966,7 +1098,7 @@ Por favor, envía el nombre de la nueva iniciativa.
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_text_message(chat_id, user_id, text):
-    """Manejar mensajes de texto durante el proceso de creación"""
+    """Manejar mensajes de texto durante el proceso de creación con validaciones"""
     if user_id not in user_states:
         return
     
@@ -975,11 +1107,15 @@ def handle_text_message(chat_id, user_id, text):
     
     try:
         if step == 'name':
-            state['data']['initiative_name'] = text
+            if len(text) > 255:
+                send_telegram_message(chat_id, "❌ El nombre debe tener máximo 255 caracteres. Intenta con un nombre más corto.")
+                return
+            
+            state['data']['initiative_name'] = text.strip()
             state['step'] = 'description'
-            send_telegram_message(chat_id, """📝 **Paso 2/6:** Descripción
+            send_telegram_message(chat_id, """📝 **Paso 2/8:** Descripción
 
-Describe qué hace esta iniciativa y cuál es su objetivo.
+Describe qué hace esta iniciativa y cuál es su objetivo (máximo 1000 caracteres).
 
 **Ejemplo:**
 "Implementar sistema de pagos con PSE y tarjetas para mejorar conversión en el checkout de droguerías."
@@ -987,11 +1123,15 @@ Describe qué hace esta iniciativa y cuál es su objetivo.
 💡 **Tip:** Incluye el problema que resuelve y el beneficio esperado.""", parse_mode='Markdown')
         
         elif step == 'description':
-            state['data']['description'] = text
+            if len(text) > 1000:
+                send_telegram_message(chat_id, "❌ La descripción debe tener máximo 1000 caracteres. Intenta con una descripción más corta.")
+                return
+                
+            state['data']['description'] = text.strip()
             state['step'] = 'owner'
-            send_telegram_message(chat_id, """👤 **Paso 3/6:** Responsable
+            send_telegram_message(chat_id, """👤 **Paso 3/8:** Responsable
 
-¿Quién es el owner/responsable principal de esta iniciativa?
+¿Quién es el owner/responsable principal de esta iniciativa? (máximo 100 caracteres)
 
 **Ejemplo:**
 • "Juan Pérez"
@@ -1001,27 +1141,74 @@ Describe qué hace esta iniciativa y cuál es su objetivo.
 💡 **Tip:** Nombre completo de la persona responsable.""", parse_mode='Markdown')
         
         elif step == 'owner':
-            state['data']['owner'] = text
+            if len(text) > 100:
+                send_telegram_message(chat_id, "❌ El owner debe tener máximo 100 caracteres.")
+                return
+                
+            state['data']['owner'] = text.strip()
             state['step'] = 'team'
-            send_telegram_message(chat_id, """👥 **Paso 4/6:** Equipo
+            send_telegram_message(chat_id, """👥 **Paso 4/8:** Equipo
 
 ¿A qué equipo pertenece esta iniciativa?
 
-**Opciones comunes:**
-• Product
-• Engineering
-• Operations
-• Sales
-• Marketing
-• Customer Success
-• Data/Analytics
+**Opciones válidas:**
+• `Product`
+• `Sales`
+• `Ops`
+• `CS`
+• `Controlling`
+• `Growth`
 
-💡 **Tip:** Usa el nombre oficial del equipo.""", parse_mode='Markdown')
+💡 **Tip:** Escribe exactamente uno de los nombres de arriba.""", parse_mode='Markdown')
         
         elif step == 'team':
-            state['data']['team'] = text
+            valid_teams = ['Product', 'Sales', 'Ops', 'CS', 'Controlling', 'Growth']
+            team_input = text.strip()
+            
+            # Buscar coincidencia case-insensitive
+            matched_team = None
+            for team in valid_teams:
+                if team.lower() == team_input.lower():
+                    matched_team = team
+                    break
+            
+            if not matched_team:
+                teams_list = "• " + "\n• ".join(valid_teams)
+                send_telegram_message(chat_id, f"❌ Equipo inválido. Debe ser uno de:\n\n{teams_list}")
+                return
+            
+            state['data']['team'] = matched_team
+            state['step'] = 'portal'
+            send_telegram_message(chat_id, """🖥️ **Paso 5/8:** Portal/Producto
+
+¿En qué portal se implementa esta iniciativa?
+
+**Opciones válidas:**
+• `Seller` - Portal de vendedores/laboratorios
+• `Droguista` - Portal de droguerías
+• `Admin` - Panel administrativo interno
+
+💡 **Tip:** Escribe exactamente una de las opciones de arriba.""", parse_mode='Markdown')
+        
+        elif step == 'portal':
+            valid_portals = ['Seller', 'Droguista', 'Admin']
+            portal_input = text.strip()
+            
+            # Buscar coincidencia case-insensitive
+            matched_portal = None
+            for portal in valid_portals:
+                if portal.lower() == portal_input.lower():
+                    matched_portal = portal
+                    break
+            
+            if not matched_portal:
+                portals_list = "• " + "\n• ".join(valid_portals)
+                send_telegram_message(chat_id, f"❌ Portal inválido. Debe ser uno de:\n\n{portals_list}")
+                return
+            
+            state['data']['portal'] = matched_portal
             state['step'] = 'kpi'
-            send_telegram_message(chat_id, """📊 **Paso 5/6:** KPI Principal
+            send_telegram_message(chat_id, """📊 **Paso 6/8:** KPI Principal (Opcional)
 
 ¿Cuál es el KPI o métrica principal que impacta esta iniciativa?
 
@@ -1031,36 +1218,128 @@ Describe qué hace esta iniciativa y cuál es su objetivo.
 • "User Retention"
 • "API Response Time"
 • "Customer Satisfaction"
-• "Monthly Active Users"
 
-💡 **Tip:** El KPI más importante que mide el éxito.""", parse_mode='Markdown')
+💡 **Tip:** Deja en blanco si no tienes un KPI específico (envía: `ninguno`)""", parse_mode='Markdown')
         
         elif step == 'kpi':
-            state['data']['main_kpi'] = text
-            state['step'] = 'portal'
-            send_telegram_message(chat_id, """🖥️ **Paso 6/6:** Portal/Producto
+            kpi_input = text.strip()
+            if kpi_input.lower() not in ['ninguno', 'no', 'n/a', '']:
+                if len(kpi_input) > 255:
+                    send_telegram_message(chat_id, "❌ El KPI debe tener máximo 255 caracteres.")
+                    return
+                state['data']['main_kpi'] = kpi_input
+            
+            state['step'] = 'reach'
+            send_telegram_message(chat_id, """📈 **Paso 7/8:** Métricas RICE
 
-¿En qué portal o producto se implementa?
+Ahora configuremos las métricas RICE para priorización:
 
-**Opciones comunes:**
-• "Portal Droguería"
-• "Portal Seller"
-• "Admin Dashboard"
-• "Mobile App"
-• "API/Backend"
-• "Interno"
+**REACH (Alcance):** ¿Qué % de usuarios impacta?
+Envía un número entre 0 y 100.
 
-💡 **Tip:** Dónde verán/usarán los usuarios esta iniciativa.""", parse_mode='Markdown')
+**Ejemplos:**
+• `85` - 85% de usuarios
+• `25` - 25% de usuarios
+• `100` - Todos los usuarios
+
+💡 **Tip:** Solo el número, sin el símbolo %""", parse_mode='Markdown')
         
-        elif step == 'portal':
-            state['data']['portal'] = text
+        elif step == 'reach':
+            try:
+                reach_input = float(text.strip())
+                if reach_input < 0 or reach_input > 100:
+                    send_telegram_message(chat_id, "❌ El reach debe estar entre 0 y 100.")
+                    return
+                
+                # Convertir a decimal (0-1)
+                state['data']['reach'] = reach_input / 100
+                state['step'] = 'impact'
+                send_telegram_message(chat_id, """💥 **IMPACT (Impacto):** ¿Qué tanto impacto tiene en el KPI?
+
+**Opciones:**
+• `1` - Impacto bajo
+• `2` - Impacto medio  
+• `3` - Impacto alto
+
+💡 **Tip:** Solo envía el número (1, 2 o 3)""", parse_mode='Markdown')
+                
+            except ValueError:
+                send_telegram_message(chat_id, "❌ Por favor envía un número válido entre 0 y 100.")
+                return
+        
+        elif step == 'impact':
+            try:
+                impact_input = int(text.strip())
+                if impact_input not in [1, 2, 3]:
+                    send_telegram_message(chat_id, "❌ El impact debe ser 1, 2 o 3.")
+                    return
+                
+                state['data']['impact'] = impact_input
+                state['step'] = 'confidence'
+                send_telegram_message(chat_id, """🎯 **CONFIDENCE (Confianza):** ¿Qué % de confianza tienes en el impacto?
+
+Envía un número entre 0 y 100.
+
+**Ejemplos:**
+• `90` - 90% de confianza
+• `70` - 70% de confianza
+• `50` - 50% de confianza
+
+💡 **Tip:** Solo el número, sin el símbolo %""", parse_mode='Markdown')
+                
+            except ValueError:
+                send_telegram_message(chat_id, "❌ Por favor envía un número válido: 1, 2 o 3.")
+                return
+        
+        elif step == 'confidence':
+            try:
+                confidence_input = float(text.strip())
+                if confidence_input < 0 or confidence_input > 100:
+                    send_telegram_message(chat_id, "❌ La confidence debe estar entre 0 y 100.")
+                    return
+                
+                # Convertir a decimal (0-1)
+                state['data']['confidence'] = confidence_input / 100
+                state['step'] = 'effort'
+                send_telegram_message(chat_id, """⚡ **EFFORT (Esfuerzo):** ¿Cuántos sprints/semanas de desarrollo?
+
+Envía un número decimal.
+
+**Ejemplos:**
+• `1` - 1 sprint
+• `2.5` - 2.5 sprints
+• `0.5` - Medio sprint
+
+💡 **Tip:** Deja en blanco para usar valor por defecto (1 sprint). Envía: `default`""", parse_mode='Markdown')
+                
+            except ValueError:
+                send_telegram_message(chat_id, "❌ Por favor envía un número válido entre 0 y 100.")
+                return
+        
+        elif step == 'effort':
+            effort_input = text.strip().lower()
+            
+            if effort_input in ['default', 'defecto', '']:
+                state['data']['effort'] = 1.0
+            else:
+                try:
+                    effort_value = float(effort_input)
+                    if effort_value <= 0:
+                        send_telegram_message(chat_id, "❌ El effort debe ser mayor a 0.")
+                        return
+                    state['data']['effort'] = effort_value
+                except ValueError:
+                    send_telegram_message(chat_id, "❌ Por favor envía un número válido mayor a 0, o 'default'.")
+                    return
             
             # Crear la iniciativa
             create_result = create_initiative(state['data'])
             
             if create_result.get('success'):
-                # Formatear confirmación
+                # Calcular score para mostrar
                 data = state['data']
+                score = (data['reach'] * data['impact'] * data['confidence']) / data['effort']
+                
                 confirmation = f"""✅ **INICIATIVA CREADA EXITOSAMENTE**
 
 🎯 **{data['initiative_name']}**
@@ -1068,19 +1347,34 @@ Describe qué hace esta iniciativa y cuál es su objetivo.
 📝 **Descripción:** {data['description']}
 👤 **Responsable:** {data['owner']}
 👥 **Equipo:** {data['team']}
-📊 **KPI Principal:** {data['main_kpi']}
 🖥️ **Portal:** {data['portal']}
+📊 **KPI Principal:** {data.get('main_kpi', 'No especificado')}
 
-🔗 La iniciativa ha sido agregada a la base de datos.
+📈 **Métricas RICE:**
+• **Reach:** {data['reach']*100:.0f}% de usuarios
+• **Impact:** {data['impact']}/3
+• **Confidence:** {data['confidence']*100:.0f}%
+• **Effort:** {data['effort']} sprints
+• **Score:** {score:.2f}
+
+🔗 La iniciativa ha sido agregada con status "Pending".
 
 💡 **Próximos pasos:**
-• Puedes buscarla con: `buscar {data['initiative_name']}`
+• Buscar: `buscar {data['initiative_name']}`
 • Ver todas: `iniciativas`
 • Crear otra: `crear`"""
                 
                 send_telegram_message(chat_id, confirmation, parse_mode='Markdown')
             else:
-                send_telegram_message(chat_id, f"❌ Error creando iniciativa: {create_result.get('error', 'Error desconocido')}\n\n💡 Prueba nuevamente con: `crear`", parse_mode='Markdown')
+                error_msg = f"❌ Error creando iniciativa: {create_result.get('error', 'Error desconocido')}"
+                
+                if 'validation_errors' in create_result:
+                    error_msg += "\n\n**Errores de validación:**\n"
+                    for error in create_result['validation_errors']:
+                        error_msg += f"• {error}\n"
+                
+                error_msg += "\n💡 Prueba nuevamente con: `crear`"
+                send_telegram_message(chat_id, error_msg, parse_mode='Markdown')
             
             # Limpiar estado
             del user_states[user_id]
