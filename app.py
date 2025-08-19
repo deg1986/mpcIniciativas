@@ -1465,6 +1465,7 @@ if __name__ == '__main__':
         bot_configured = setup_webhook()
         logger.info(f"🤖 Bot webhook configured: {bot_configured}")
     
-    # Ejecutar Flask
-    port = int(os.environ.get('PORT', 5000))
+    # Ejecutar Flask - usar puerto asignado por Render
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"🚀 Starting Flask app on port {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
