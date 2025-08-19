@@ -55,6 +55,36 @@ def get_initiatives():
         logger.error(f"❌ Error fetching initiatives: {e}")
         return {"success": False, "error": str(e)}
 
+def sort_initiatives_by_score(initiatives):
+    """Ordenar iniciativas por score (mayor a menor) y calcular score si no existe"""
+    def calculate_score(initiative):
+        try:
+            # Si ya tiene score, usarlo
+            if 'score' in initiative and initiative['score'] is not None:
+                return float(initiative['score'])
+            
+            # Calcular score manualmente si no existe
+            reach = float(initiative.get('reach', 0)) if initiative.get('reach') else 0
+            impact = float(initiative.get('impact', 0)) if initiative.get('impact') else 0
+            confidence = float(initiative.get('confidence', 0)) if initiative.get('confidence') else 0
+            effort = float(initiative.get('effort', 1)) if initiative.get('effort') else 1
+            
+            if reach > 0 and impact > 0 and confidence > 0 and effort > 0:
+                score = (reach * impact * confidence) / effort
+                # Agregar score calculado al objeto para uso posterior
+                initiative['calculated_score'] = score
+                return score
+            else:
+                initiative['calculated_score'] = 0
+                return 0
+        except:
+            initiative['calculated_score'] = 0
+            return 0
+    
+    # Ordenar por score descendente
+    sorted_initiatives = sorted(initiatives, key=calculate_score, reverse=True)
+    return sorted_initiatives
+
 def validate_initiative_data(data):
     """Validar datos de iniciativa según esquema de DB"""
     errors = []
@@ -195,11 +225,14 @@ def create_initiative(data):
         return {"success": False, "error": str(e)}
 
 def calculate_statistics(initiatives):
-    """Calcular estadísticas detalladas con porcentajes"""
+    """Calcular estadísticas detalladas con porcentajes y ordenamiento por score"""
     if not initiatives:
         return {}
     
-    total = len(initiatives)
+    # Ordenar iniciativas por score antes de calcular estadísticas
+    sorted_initiatives = sort_initiatives_by_score(initiatives)
+    
+    total = len(sorted_initiatives)
     
     # Contadores
     teams = Counter()
@@ -212,9 +245,13 @@ def calculate_statistics(initiatives):
     total_impact = 0
     total_confidence = 0
     total_effort = 0
+    total_score = 0
     metric_count = 0
     
-    for init in initiatives:
+    # Rankings por score
+    top_initiatives = []
+    
+    for init in sorted_initiatives:
         if isinstance(init, dict):
             # Contadores básicos
             team = init.get('team', 'Sin equipo').strip()
@@ -234,12 +271,25 @@ def calculate_statistics(initiatives):
                 confidence = float(init.get('confidence', 0)) if init.get('confidence') else 0
                 effort = float(init.get('effort', 0)) if init.get('effort') else 0
                 
+                # Usar score de DB o calculado
+                score = float(init.get('score', 0)) if init.get('score') else init.get('calculated_score', 0)
+                
                 if reach > 0 or impact > 0 or confidence > 0 or effort > 0:
                     total_reach += reach
                     total_impact += impact
                     total_confidence += confidence
                     total_effort += effort
+                    total_score += score
                     metric_count += 1
+                
+                # Agregar a top initiatives con score
+                if score > 0:
+                    top_initiatives.append({
+                        'name': init.get('initiative_name', 'Sin nombre'),
+                        'score': score,
+                        'team': team,
+                        'owner': owner
+                    })
             except:
                 pass
     
@@ -256,7 +306,8 @@ def calculate_statistics(initiatives):
             'reach': (total_reach / metric_count) * 100,
             'impact': (total_impact / metric_count),
             'confidence': (total_confidence / metric_count) * 100,
-            'effort': (total_effort / metric_count)
+            'effort': (total_effort / metric_count),
+            'score': (total_score / metric_count)
         }
     
     return {
@@ -268,15 +319,24 @@ def calculate_statistics(initiatives):
         'average_metrics': avg_metrics,
         'top_teams': teams.most_common(5),
         'top_owners': owners.most_common(5),
-        'top_kpis': kpis.most_common(3)
+        'top_kpis': kpis.most_common(3),
+        'top_initiatives_by_score': top_initiatives[:10],  # Top 10 por score
+        'sorted_initiatives': sorted_initiatives  # Iniciativas ordenadas por score
     }
 
 def format_statistics_text(stats):
-    """Formatear estadísticas para mostrar en Telegram"""
+    """Formatear estadísticas para mostrar en Telegram con rankings por score"""
     if not stats:
         return "No hay datos para mostrar estadísticas."
     
     text = f"📊 **ESTADÍSTICAS SALUDIA** ({stats['total_initiatives']} iniciativas)\n\n"
+    
+    # TOP 5 INICIATIVAS POR SCORE
+    if stats.get('top_initiatives_by_score'):
+        text += "🏆 **TOP 5 INICIATIVAS POR SCORE:**\n"
+        for i, init in enumerate(stats['top_initiatives_by_score'][:5], 1):
+            text += f"{i}. **{init['name']}** - Score: {init['score']:.2f}\n"
+            text += f"   👥 {init['team']} | 👤 {init['owner']}\n\n"
     
     # Distribución por equipos
     text += "👥 **DISTRIBUCIÓN POR EQUIPOS:**\n"
@@ -304,11 +364,12 @@ def format_statistics_text(stats):
         text += f"• Impacto: {metrics.get('impact', 0):.1f}/3\n"
         text += f"• Confianza: {metrics.get('confidence', 0):.1f}%\n"
         text += f"• Esfuerzo: {metrics.get('effort', 0):.1f} sprints\n"
+        text += f"• **Score Promedio: {metrics.get('score', 0):.2f}**\n"
     
     return text
 
 def search_initiatives(query, field="all"):
-    """Buscar iniciativas por término"""
+    """Buscar iniciativas por término y ordenar por score"""
     try:
         data = get_initiatives()
         
@@ -342,8 +403,11 @@ def search_initiatives(query, field="all"):
                         matching.append(initiative)
                         break
         
-        logger.info(f"✅ Search '{query}' found {len(matching)} results")
-        return {"success": True, "results": matching, "total": len(matching)}
+        # Ordenar resultados por score
+        sorted_matching = sort_initiatives_by_score(matching)
+        
+        logger.info(f"✅ Search '{query}' found {len(sorted_matching)} results")
+        return {"success": True, "results": sorted_matching, "total": len(sorted_matching)}
         
     except Exception as e:
         logger.error(f"❌ Error searching initiatives: {e}")
@@ -378,32 +442,34 @@ def query_llm(prompt, context=None):
 - Growth: Marketing y crecimiento
 
 🎯 TU EXPERTISE:
-- Análisis de portfolio de iniciativas
-- Identificación de gaps estratégicos
-- Optimización de recursos entre equipos
-- Balance growth vs operational excellence
-- Impacto en experiencia de droguerías y sellers
+- Análisis de portfolio de iniciativas usando metodología RICE
+- Score = (Reach × Impact × Confidence) / Effort
+- Identificación de gaps estratégicos basado en scores
+- Optimización de recursos entre equipos considerando ROI
+- Balance growth vs operational excellence usando métricas cuantitativas
 
 💡 ESTILO:
 - Profesional pero conversacional para equipos internos
 - Insights accionables específicos para marketplace
 - Considera impacto en ambos lados del marketplace
 - Enfócate en métricas clave: GMV, Take Rate, Retention, NPS
+- Prioriza iniciativas por score RICE
 - Siempre en español
 
-🔍 AL ANALIZAR:
-1. Balance entre growth vs operational initiatives
-2. Distribución de recursos entre equipos
-3. Gaps en customer experience (droguerías/sellers)
-4. Oportunidades de automatización
-5. Sinergias cross-team
+🔍 AL ANALIZAR CONSIDERA:
+1. Ranking por score RICE para priorización
+2. Balance entre growth vs operational initiatives
+3. Distribución de recursos entre equipos
+4. ROI esperado basado en métricas RICE
+5. Gaps en customer experience considerando scores bajos
+6. Oportunidades de mejora en iniciativas de bajo score
 
-Tu objetivo: Proporcionar insights estratégicos para optimizar el portfolio de iniciativas."""
+Tu objetivo: Proporcionar insights estratégicos priorizados por score para optimizar el portfolio de iniciativas."""
 
         messages = [{"role": "system", "content": system_message}]
         
         if context:
-            context_message = f"📋 DATOS ACTUALES DE SALUDIA:\n{context}\n\n💭 Proporciona análisis estratégico:"
+            context_message = f"📋 DATOS ACTUALES DE SALUDIA (ORDENADOS POR SCORE):\n{context}\n\n💭 Proporciona análisis estratégico considerando el ranking por score RICE:"
             messages.append({"role": "user", "content": context_message})
         
         messages.append({"role": "user", "content": prompt})
@@ -428,16 +494,24 @@ Tu objetivo: Proporcionar insights estratégicos para optimizar el portfolio de 
         return {"success": False, "error": str(e), "response": "Error técnico del asistente AI."}
 
 def analyze_initiatives_with_llm(initiatives):
-    """Analizar iniciativas usando LLM con estadísticas"""
+    """Analizar iniciativas usando LLM con estadísticas ordenadas por score"""
     if not initiatives:
         return "No hay iniciativas para analizar."
     
-    # Calcular estadísticas
+    # Calcular estadísticas con ordenamiento por score
     stats = calculate_statistics(initiatives)
+    sorted_initiatives = stats.get('sorted_initiatives', initiatives)
     
-    # Preparar contexto detallado con estadísticas
-    context = f"PORTFOLIO SALUDIA - ANÁLISIS ESTADÍSTICO:\n\n"
+    # Preparar contexto detallado con estadísticas y ranking
+    context = f"PORTFOLIO SALUDIA - ANÁLISIS POR SCORE RICE:\n\n"
     context += f"📊 TOTAL: {stats['total_initiatives']} iniciativas\n\n"
+    
+    # TOP INICIATIVAS POR SCORE
+    if stats.get('top_initiatives_by_score'):
+        context += "🏆 TOP 10 INICIATIVAS POR SCORE RICE:\n"
+        for i, init in enumerate(stats['top_initiatives_by_score'], 1):
+            context += f"{i}. {init['name']} - Score: {init['score']:.2f} ({init['team']} - {init['owner']})\n"
+        context += "\n"
     
     # Distribución por equipos con porcentajes
     context += "👥 DISTRIBUCIÓN POR EQUIPOS:\n"
@@ -445,13 +519,7 @@ def analyze_initiatives_with_llm(initiatives):
         pct = stats['teams'][team]
         context += f"• {team}: {count} iniciativas ({pct:.1f}%)\n"
     
-    # Top owners
-    context += f"\n👤 TOP RESPONSABLES:\n"
-    for owner, count in stats['top_owners']:
-        pct = stats['owners'][owner]
-        context += f"• {owner}: {count} iniciativas ({pct:.1f}%)\n"
-    
-    # Métricas promedio
+    # Métricas promedio incluyendo score
     if stats['average_metrics']:
         context += f"\n📈 MÉTRICAS PROMEDIO:\n"
         metrics = stats['average_metrics']
@@ -459,40 +527,45 @@ def analyze_initiatives_with_llm(initiatives):
         context += f"• Impacto: {metrics.get('impact', 0):.1f}/3\n"
         context += f"• Confianza: {metrics.get('confidence', 0):.1f}%\n"
         context += f"• Esfuerzo: {metrics.get('effort', 0):.1f} sprints\n"
+        context += f"• Score Promedio: {metrics.get('score', 0):.2f}\n"
     
-    # Agregar detalles de iniciativas por equipo
+    # Agregar detalles de iniciativas por equipo (ordenadas por score)
     teams = {}
-    for init in initiatives:
+    for init in sorted_initiatives:
         team = init.get('team', 'Sin equipo')
         if team not in teams:
             teams[team] = []
         teams[team].append(init)
     
-    context += f"\n📋 DETALLE POR EQUIPOS:\n"
+    context += f"\n📋 DETALLE POR EQUIPOS (TOP 3 POR SCORE):\n"
     for team, team_initiatives in teams.items():
-        context += f"\n{team.upper()} ({len(team_initiatives)} iniciativas):\n"
-        for init in team_initiatives[:3]:  # Máximo 3 por equipo
+        # Ordenar iniciativas del equipo por score
+        team_sorted = sort_initiatives_by_score(team_initiatives)
+        context += f"\n{team.upper()} ({len(team_sorted)} iniciativas):\n"
+        for i, init in enumerate(team_sorted[:3], 1):  # Top 3 por equipo
             name = init.get('initiative_name', 'Sin nombre')
             kpi = init.get('main_kpi', 'Sin KPI')
             portal = init.get('portal', 'Sin portal')
-            context += f"  • {name} (KPI: {kpi}, Portal: {portal})\n"
+            score = init.get('score', init.get('calculated_score', 0))
+            context += f"  {i}. {name} - Score: {score:.2f} (KPI: {kpi}, Portal: {portal})\n"
     
-    prompt = """Analiza este portfolio de iniciativas de Saludia y proporciona insights estratégicos.
+    prompt = """Analiza este portfolio de iniciativas de Saludia priorizando por score RICE y proporciona insights estratégicos.
 
-ANÁLISIS REQUERIDO:
-1. 📊 Evaluación de la distribución actual de recursos
-2. ⚖️ Balance entre growth initiatives vs operational excellence
-3. 🔄 Oportunidades de sinergia cross-team específicas
-4. ⚠️ Gaps críticos en experiencia de droguerías o sellers
-5. 📈 Recomendaciones prioritarias para maximizar impacto del marketplace
+ANÁLISIS REQUERIDO (CON ENFOQUE EN SCORING):
+1. 📊 Evaluación del ranking actual por score RICE
+2. ⚖️ Balance entre iniciativas de alto vs bajo score por equipo
+3. 🔄 Oportunidades de optimización basadas en scores bajos
+4. ⚠️ Identificación de iniciativas sub-optimizadas (bajo score)
+5. 📈 Recomendaciones para mejorar scores del portfolio
+6. 🎯 Priorización estratégica basada en metodología RICE
 
-Enfócate en insights accionables para líderes de equipos internos de Saludia."""
+Enfócate en insights accionables considerando el score como factor principal de priorización."""
     
     result = query_llm(prompt, context)
     return result.get("response", "Error analizando iniciativas.")
 
 def format_initiative_complete(initiative, index=None):
-    """Formatear iniciativa con información COMPLETA para búsquedas"""
+    """Formatear iniciativa con información COMPLETA para búsquedas incluyendo score"""
     try:
         name = initiative.get('initiative_name', 'Sin nombre')
         description = initiative.get('description', 'Sin descripción')
@@ -507,7 +580,7 @@ def format_initiative_complete(initiative, index=None):
         impact = initiative.get('impact', 0)
         confidence = initiative.get('confidence', 0)
         effort = initiative.get('effort', 1)
-        score = initiative.get('score', 0)
+        score = initiative.get('score', initiative.get('calculated_score', 0))
         
         # Convertir a números si es posible
         try:
@@ -526,10 +599,13 @@ def format_initiative_complete(initiative, index=None):
         effort_val = f"{effort:.1f} sprints" if effort > 0 else "N/A"
         score_val = f"{score:.2f}" if score > 0 else "N/A"
         
+        # Emoji de prioridad basado en score
+        priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
+        
         prefix = f"**{index}.** " if index else ""
         
         # Formato COMPLETO para búsquedas
-        formatted = f"""{prefix}🎯 **{name}**
+        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score_val})
 
 📝 **Descripción:**
 {description}
@@ -545,29 +621,9 @@ def format_initiative_complete(initiative, index=None):
 • Impacto: {impact_val}
 • Confianza: {confidence_pct}
 • Esfuerzo: {effort_val}
-• **Score:** {score_val}
+• **Score RICE: {score_val}**
 
 ━━━━━━━━━━━━━━━━━━━━━"""
-        
-        return formatted
-        
-    except Exception as e:
-        logger.error(f"Error formatting initiative: {e}")
-        return f"{index}. **{initiative.get('initiative_name', 'Error de formato')}**"
-
-def format_initiative_summary(initiative, index=None):
-    """Formatear iniciativa en modo resumen para listados"""
-    try:
-        name = initiative.get('initiative_name', 'Sin nombre')
-        owner = initiative.get('owner', 'Sin owner')
-        team = initiative.get('team', 'Sin equipo')
-        kpi = initiative.get('main_kpi', 'Sin KPI')
-        status = initiative.get('status', 'Pending')
-        
-        prefix = f"**{index}.** " if index else ""
-        
-        formatted = f"""{prefix}🎯 **{name}**
-👤 {owner} | 👥 {team} | 📊 {kpi} | 📋 {status}"""
         
         return formatted
         
@@ -626,11 +682,11 @@ def home():
     """Endpoint principal"""
     return jsonify({
         "name": "Saludia Initiatives MCP Server",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "status": "running",
         "timestamp": datetime.now().isoformat(),
         "company": "Saludia Marketplace",
-        "description": "Sistema de gestión de iniciativas con validaciones y estadísticas avanzadas",
+        "description": "Sistema de gestión de iniciativas con validaciones, estadísticas y ordenamiento por score RICE",
         "telegram_bot": {
             "enabled": bool(TELEGRAM_TOKEN),
             "webhook_configured": bot_configured,
@@ -640,7 +696,7 @@ def home():
             "enabled": bool(GROQ_API_KEY),
             "model": GROQ_MODEL,
             "provider": "Groq",
-            "specialized_for": "Saludia marketplace analytics"
+            "specialized_for": "Saludia marketplace analytics with RICE scoring"
         },
         "features": [
             "detailed_search_with_descriptions",
@@ -648,13 +704,22 @@ def home():
             "team_and_owner_analytics",
             "ai_strategic_analysis",
             "complete_data_validation",
-            "rice_scoring_system"
+            "rice_scoring_system",
+            "score_based_ordering",
+            "priority_ranking"
         ],
         "database_schema": {
             "required_fields": ["initiative_name", "description", "portal", "owner", "team", "reach", "impact", "confidence"],
             "valid_portals": ["Seller", "Droguista", "Admin"],
             "valid_teams": ["Product", "Sales", "Ops", "CS", "Controlling", "Growth"],
             "auto_fields": ["id", "score", "status", "created_at", "updated_at"]
+        },
+        "rice_methodology": {
+            "formula": "(Reach × Impact × Confidence) / Effort",
+            "reach": "0-1 (percentage of users impacted)",
+            "impact": "1-3 (low, medium, high impact)",
+            "confidence": "0-1 (confidence percentage)",
+            "effort": ">0 (effort in sprints)"
         }
     })
 
@@ -706,13 +771,17 @@ def setup_webhook_endpoint():
 
 @app.route('/api/initiatives')
 def api_initiatives():
-    """API para obtener iniciativas"""
+    """API para obtener iniciativas ordenadas por score"""
     data = get_initiatives()
+    if data.get("success"):
+        # Ordenar por score antes de devolver
+        sorted_initiatives = sort_initiatives_by_score(data.get("data", []))
+        data["data"] = sorted_initiatives
     return jsonify(data)
 
 @app.route('/api/initiatives/search', methods=['GET'])
 def api_search_initiatives():
-    """API para buscar iniciativas"""
+    """API para buscar iniciativas ordenadas por score"""
     query = request.args.get('q', '').strip()
     field = request.args.get('field', 'all')
     
@@ -724,7 +793,7 @@ def api_search_initiatives():
 
 @app.route('/api/initiatives/statistics', methods=['GET'])
 def api_statistics():
-    """API para obtener estadísticas"""
+    """API para obtener estadísticas con ordenamiento por score"""
     data = get_initiatives()
     
     if not data.get("success"):
@@ -744,7 +813,7 @@ def api_create():
 
 @app.route('/ai/analyze-initiatives', methods=['POST'])
 def analyze_initiatives_endpoint():
-    """Endpoint para analizar iniciativas con AI"""
+    """Endpoint para analizar iniciativas con AI ordenadas por score"""
     try:
         data = get_initiatives()
         
@@ -791,9 +860,8 @@ def telegram_webhook():
             user_id = message['from']['id']
             
             if 'text' in message:
-                text = message['text'].strip().lower()  # Convertir a minúsculas
+                text = message['text'].strip().lower()
                 
-                # Comandos con y SIN barra diagonal (más user-friendly)
                 if text in ['/start', 'start', 'inicio', 'hola', 'empezar']:
                     handle_start_command(chat_id)
                 elif text in ['/help', 'help', 'ayuda', 'comandos']:
@@ -806,7 +874,6 @@ def telegram_webhook():
                     handle_analyze_command(chat_id)
                 elif (text.startswith('/buscar ') or text.startswith('buscar ') or 
                       text.startswith('search ') or text.startswith('encontrar ')):
-                    # Extraer término de búsqueda
                     if text.startswith('/'):
                         query = text.split(' ', 1)[1] if ' ' in text else ""
                     else:
@@ -817,15 +884,11 @@ def telegram_webhook():
                     else:
                         send_telegram_message(chat_id, "🔍 **¿Qué quieres buscar?**\n\nEjemplos:\n• `buscar Product`\n• `buscar API`\n• `buscar Juan`")
                 elif text.startswith('/'):
-                    # Comando con / no reconocido
                     send_telegram_message(chat_id, "❓ Comando no reconocido. Escribe `ayuda` para ver opciones disponibles.")
                 else:
-                    # Mensaje de texto normal
                     if user_id in user_states:
-                        # Proceso de creación activo
-                        handle_text_message(chat_id, user_id, message['text'])  # Usar texto original
+                        handle_text_message(chat_id, user_id, message['text'])
                     else:
-                        # Respuesta inteligente para texto libre
                         handle_natural_message(chat_id, text)
         
         return "OK", 200
@@ -838,50 +901,52 @@ def handle_natural_message(chat_id, text):
     """Manejar mensajes en lenguaje natural"""
     text_lower = text.lower()
     
-    # Palabras clave para comandos
     if any(word in text_lower for word in ['iniciativa', 'proyecto', 'lista', 'ver', 'mostrar']):
-        send_telegram_message(chat_id, "🎯 ¿Quieres ver las iniciativas?\n\nEscribe: `iniciativas`")
+        send_telegram_message(chat_id, "🎯 ¿Quieres ver las iniciativas ordenadas por score?\n\nEscribe: `iniciativas`")
     elif any(word in text_lower for word in ['buscar', 'encontrar', 'busco', 'dónde']):
         send_telegram_message(chat_id, "🔍 ¿Qué quieres buscar?\n\nEjemplos:\n• `buscar Product`\n• `buscar API`\n• `buscar droguería`")
     elif any(word in text_lower for word in ['crear', 'nueva', 'agregar', 'añadir']):
         send_telegram_message(chat_id, "🆕 ¿Quieres crear una nueva iniciativa?\n\nEscribe: `crear`")
-    elif any(word in text_lower for word in ['análisis', 'analizar', 'estadística', 'resumen']):
-        send_telegram_message(chat_id, "📊 ¿Quieres ver el análisis del portfolio?\n\nEscribe: `analizar`")
+    elif any(word in text_lower for word in ['análisis', 'analizar', 'estadística', 'resumen', 'score']):
+        send_telegram_message(chat_id, "📊 ¿Quieres ver el análisis del portfolio por score RICE?\n\nEscribe: `analizar`")
     elif any(word in text_lower for word in ['ayuda', 'help', 'comando', 'opciones']):
         handle_help_command(chat_id)
     else:
-        # Respuesta general amigable
         send_telegram_message(chat_id, """👋 **¡Hola!** No estoy seguro de qué necesitas.
 
 **Opciones disponibles:**
-• `iniciativas` - Ver todas las iniciativas
+• `iniciativas` - Ver todas ordenadas por score RICE
 • `buscar <término>` - Buscar algo específico  
-• `crear` - Nueva iniciativa
-• `analizar` - Estadísticas y análisis
+• `crear` - Nueva iniciativa con métricas RICE
+• `analizar` - Análisis estratégico por score
 • `ayuda` - Ver todos los comandos
 
-💡 **Tip:** No necesitas usar `/` - solo escribe la palabra.""")
+💡 **Tip:** Todas las listas están ordenadas por score RICE (mayor a menor).""")
 
 def handle_start_command(chat_id):
     """Manejar comando /start"""
     logger.info(f"📱 /start from chat {chat_id}")
     
-    text = """🎯 **Bot de Iniciativas Saludia**
+    text = """🎯 **Bot de Iniciativas Saludia** ⚡ v2.3
 
 ¡Hola! Soy tu asistente de gestión de iniciativas para equipos internos de Saludia.
 
 **🏢 Saludia:** Marketplace que conecta droguerías independientes con sellers y laboratorios.
 
 **📋 Comandos principales:**
-• `iniciativas` - Ver todas las iniciativas + estadísticas
-• `buscar <término>` - Buscar iniciativas (info completa)
-• `crear` - Crear nueva iniciativa con validaciones
-• `analizar` - Análisis AI del portfolio + métricas
+• `iniciativas` - Ver todas ordenadas por score RICE 🏆
+• `buscar <término>` - Buscar iniciativas (por score)
+• `crear` - Crear nueva iniciativa con métricas RICE
+• `analizar` - Análisis AI del portfolio + rankings
 
 **🔍 Ejemplos de búsqueda:**
 • `buscar Product` - Iniciativas del equipo Product
 • `buscar droguería` - Todo relacionado con droguerías
 • `buscar API` - Iniciativas de API
+
+**📊 Metodología RICE:**
+Score = (Reach × Impact × Confidence) / Effort
+Todas las listas están priorizadas por score.
 
 **💡 Tip:** No necesitas usar `/` - solo escribe la palabra.
 
@@ -893,16 +958,16 @@ def handle_help_command(chat_id):
     """Manejar comando /help"""
     logger.info(f"📱 /help from chat {chat_id}")
     
-    text = """📚 **Comandos Disponibles**
+    text = """📚 **Comandos Disponibles** ⚡ v2.3
 
 **📋 Gestión de Iniciativas:**
-• `iniciativas` - Lista completa + estadísticas
-• `buscar <término>` - Búsqueda detallada
-• `crear` - Nueva iniciativa (8 pasos con validaciones)
+• `iniciativas` - Lista completa ordenada por score RICE 🏆
+• `buscar <término>` - Búsqueda detallada (por score)
+• `crear` - Nueva iniciativa (8 pasos con validaciones RICE)
 
 **📊 Análisis y Reportes:**
-• `analizar` - Análisis AI + métricas del portfolio
-• `estadísticas` - Resumen estadístico rápido
+• `analizar` - Análisis AI + rankings por score RICE
+• `estadísticas` - Resumen estadístico con top scores
 
 **🔍 Búsquedas Específicas:**
 • `buscar Product` - Por equipo
@@ -910,25 +975,30 @@ def handle_help_command(chat_id):
 • `buscar Juan` - Por responsable
 • `buscar API` - Por tecnología/KPI
 
+**🏆 Sistema de Priorización RICE:**
+✅ **Score = (Reach × Impact × Confidence) / Effort**
+✅ 🔥 Score ≥ 2.0 (Alta prioridad)
+✅ ⭐ Score ≥ 1.0 (Media prioridad)  
+✅ 📋 Score < 1.0 (Baja prioridad)
+
 **💡 Características Nuevas:**
-✅ Validaciones completas según DB schema
-✅ Métricas RICE (Reach, Impact, Confidence, Effort)
-✅ Score automático calculado
-✅ Equipos: Product, Sales, Ops, CS, Controlling, Growth
-✅ Portales: Seller, Droguista, Admin
+✅ Ordenamiento automático por score RICE
+✅ Rankings en análisis y estadísticas
+✅ Emojis de prioridad basados en score
+✅ Top 10 iniciativas por score en análisis
+✅ Búsquedas ordenadas por relevancia + score
 
 **🤖 IA Especializada:**
-Nuestro asistente conoce el contexto de Saludia como marketplace farmacéutico y proporciona insights estratégicos específicos para equipos internos.
+Nuestro asistente analiza el portfolio considerando scores RICE y proporciona insights estratégicos priorizados para Saludia.
 
 **📞 Soporte:** Para más ayuda, contacta al equipo de Product."""
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_list_initiatives(chat_id):
-    """Manejar comando para listar iniciativas"""
+    """Manejar comando para listar iniciativas ordenadas por score"""
     logger.info(f"📱 List initiatives from chat {chat_id}")
     
-    # Obtener iniciativas
     data = get_initiatives()
     
     if not data.get("success"):
@@ -941,35 +1011,20 @@ def handle_list_initiatives(chat_id):
         send_telegram_message(chat_id, "📭 No hay iniciativas registradas.")
         return
     
-    # Calcular estadísticas
     stats = calculate_statistics(initiatives)
+    sorted_initiatives = stats.get('sorted_initiatives', initiatives)
     
-    # Enviar estadísticas primero
     stats_text = format_statistics_text(stats)
     send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
     
-    # Enviar lista resumida
-    text = f"📋 **LISTA DE INICIATIVAS** (Resumen)\n\n"
-    
-    # Agrupar por equipos para mejor organización
-    teams = {}
-    for init in initiatives:
-        team = init.get('team', 'Sin equipo')
-        if team not in teams:
-            teams[team] = []
-        teams[team].append(init)
-    
-    counter = 1
-    for team, team_initiatives in teams.items():
-        text += f"👥 **{team.upper()}:**\n"
-        for init in team_initiatives:
-            formatted = format_initiative_summary(init, counter)
-            text += f"{formatted}\n\n"
-            counter += 1
+    text = f"📋 **LISTA DE INICIATIVAS** (Ordenadas por Score RICE)\n\n"
+    text += "🏆 **RANKING COMPLETO POR SCORE:**\n"
+    for i, init in enumerate(sorted_initiatives, 1):
+        formatted = format_initiative_summary(init, i)
+        text += f"{formatted}\n\n"
     
     text += f"💡 **Tip:** Usa `buscar <término>` para información completa de iniciativas específicas."
     
-    # Enviar en chunks si es muy largo
     if len(text) > 4000:
         chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for chunk in chunks:
@@ -978,7 +1033,7 @@ def handle_list_initiatives(chat_id):
         send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_search_command(chat_id, query):
-    """Manejar comando de búsqueda"""
+    """Manejar comando de búsqueda ordenado por score"""
     logger.info(f"📱 Search '{query}' from chat {chat_id}")
     
     result = search_initiatives(query)
@@ -991,7 +1046,6 @@ def handle_search_command(chat_id, query):
     total = result.get("total", 0)
     
     if not results:
-        # Sugerir búsquedas alternativas
         suggestions_text = f"""🔍 **Sin resultados para:** "{query}"
 
 **💡 Sugerencias:**
@@ -1009,12 +1063,10 @@ Escribe: `iniciativas`"""
         send_telegram_message(chat_id, suggestions_text, parse_mode='Markdown')
         return
     
-    # Enviar resultados con información COMPLETA
-    text = f"🔍 **RESULTADOS DE BÚSQUEDA**\n"
+    text = f"🔍 **RESULTADOS DE BÚSQUEDA** (Ordenados por Score RICE)\n"
     text += f"**Término:** {query}\n"
     text += f"**Encontrados:** {total} iniciativa(s)\n\n"
     
-    # Mostrar hasta 5 resultados completos
     for i, init in enumerate(results[:5], 1):
         formatted = format_initiative_complete(init, i)
         text += f"{formatted}\n\n"
@@ -1023,7 +1075,6 @@ Escribe: `iniciativas`"""
         text += f"📝 **Nota:** Se muestran las primeras 5 de {total} iniciativas encontradas.\n"
         text += f"Refina tu búsqueda para resultados más específicos."
     
-    # Enviar en chunks si es muy largo
     if len(text) > 4000:
         chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for chunk in chunks:
@@ -1032,12 +1083,11 @@ Escribe: `iniciativas`"""
         send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_analyze_command(chat_id):
-    """Manejar comando de análisis"""
+    """Manejar comando de análisis con enfoque en score RICE"""
     logger.info(f"📱 Analyze command from chat {chat_id}")
     
-    send_telegram_message(chat_id, "🤖 **Analizando portfolio de iniciativas...**\n\nEsto puede tomar unos segundos.", parse_mode='Markdown')
+    send_telegram_message(chat_id, "🤖 **Analizando portfolio por score RICE...**\n\nEsto puede tomar unos segundos.", parse_mode='Markdown')
     
-    # Obtener iniciativas
     data = get_initiatives()
     
     if not data.get("success"):
@@ -1050,18 +1100,14 @@ def handle_analyze_command(chat_id):
         send_telegram_message(chat_id, "📭 No hay iniciativas para analizar.")
         return
     
-    # Enviar estadísticas primero
     stats = calculate_statistics(initiatives)
     stats_text = format_statistics_text(stats)
     send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
     
-    # Análisis con IA
     if GROQ_API_KEY:
         analysis = analyze_initiatives_with_llm(initiatives)
+        analysis_text = f"🤖 **ANÁLISIS ESTRATÉGICO CON IA** (Enfoque RICE)\n\n{analysis}"
         
-        analysis_text = f"🤖 **ANÁLISIS ESTRATÉGICO CON IA**\n\n{analysis}"
-        
-        # Enviar en chunks si es muy largo
         if len(analysis_text) > 4000:
             chunks = [analysis_text[i:i+4000] for i in range(0, len(analysis_text), 4000)]
             for chunk in chunks:
@@ -1075,14 +1121,13 @@ def handle_create_command(chat_id, user_id):
     """Iniciar proceso de creación de iniciativa con validaciones"""
     logger.info(f"📱 Create command from chat {chat_id}, user {user_id}")
     
-    # Inicializar estado del usuario
     user_states[user_id] = {
         'step': 'name',
         'data': {},
         'chat_id': chat_id
     }
     
-    text = """🆕 **CREAR NUEVA INICIATIVA**
+    text = """🆕 **CREAR NUEVA INICIATIVA** (Metodología RICE)
 
 📝 **Paso 1/8:** Nombre de la iniciativa
 
@@ -1093,7 +1138,7 @@ Por favor, envía el nombre de la nueva iniciativa (máximo 255 caracteres).
 • "Optimización del checkout"
 • "Dashboard analytics v2"
 
-💡 **Tip:** Usa un nombre descriptivo y específico."""
+💡 **Tip:** Usa un nombre descriptivo y específico para calcular mejor el score RICE."""
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
@@ -1120,7 +1165,7 @@ Describe qué hace esta iniciativa y cuál es su objetivo (máximo 1000 caracter
 **Ejemplo:**
 "Implementar sistema de pagos con PSE y tarjetas para mejorar conversión en el checkout de droguerías."
 
-💡 **Tip:** Incluye el problema que resuelve y el beneficio esperado.""", parse_mode='Markdown')
+💡 **Tip:** Incluye el problema que resuelve y el beneficio esperado para calcular mejor las métricas RICE.""", parse_mode='Markdown')
         
         elif step == 'description':
             if len(text) > 1000:
@@ -1165,7 +1210,6 @@ Describe qué hace esta iniciativa y cuál es su objetivo (máximo 1000 caracter
             valid_teams = ['Product', 'Sales', 'Ops', 'CS', 'Controlling', 'Growth']
             team_input = text.strip()
             
-            # Buscar coincidencia case-insensitive
             matched_team = None
             for team in valid_teams:
                 if team.lower() == team_input.lower():
@@ -1194,7 +1238,6 @@ Describe qué hace esta iniciativa y cuál es su objetivo (máximo 1000 caracter
             valid_portals = ['Seller', 'Droguista', 'Admin']
             portal_input = text.strip()
             
-            # Buscar coincidencia case-insensitive
             matched_portal = None
             for portal in valid_portals:
                 if portal.lower() == portal_input.lower():
@@ -1232,7 +1275,7 @@ Describe qué hace esta iniciativa y cuál es su objetivo (máximo 1000 caracter
             state['step'] = 'reach'
             send_telegram_message(chat_id, """📈 **Paso 7/8:** Métricas RICE
 
-Ahora configuremos las métricas RICE para priorización:
+Ahora configuremos las métricas RICE para calcular el score de priorización:
 
 **REACH (Alcance):** ¿Qué % de usuarios impacta?
 Envía un número entre 0 y 100.
@@ -1251,7 +1294,6 @@ Envía un número entre 0 y 100.
                     send_telegram_message(chat_id, "❌ El reach debe estar entre 0 y 100.")
                     return
                 
-                # Convertir a decimal (0-1)
                 state['data']['reach'] = reach_input / 100
                 state['step'] = 'impact'
                 send_telegram_message(chat_id, """💥 **IMPACT (Impacto):** ¿Qué tanto impacto tiene en el KPI?
@@ -1298,7 +1340,6 @@ Envía un número entre 0 y 100.
                     send_telegram_message(chat_id, "❌ La confidence debe estar entre 0 y 100.")
                     return
                 
-                # Convertir a decimal (0-1)
                 state['data']['confidence'] = confidence_input / 100
                 state['step'] = 'effort'
                 send_telegram_message(chat_id, """⚡ **EFFORT (Esfuerzo):** ¿Cuántos sprints/semanas de desarrollo?
@@ -1332,17 +1373,18 @@ Envía un número decimal.
                     send_telegram_message(chat_id, "❌ Por favor envía un número válido mayor a 0, o 'default'.")
                     return
             
-            # Crear la iniciativa
             create_result = create_initiative(state['data'])
             
             if create_result.get('success'):
-                # Calcular score para mostrar
                 data = state['data']
                 score = (data['reach'] * data['impact'] * data['confidence']) / data['effort']
                 
+                priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
+                priority_text = "Alta" if score >= 2.0 else "Media" if score >= 1.0 else "Baja"
+                
                 confirmation = f"""✅ **INICIATIVA CREADA EXITOSAMENTE**
 
-🎯 **{data['initiative_name']}**
+{priority_emoji} **{data['initiative_name']}**
 
 📝 **Descripción:** {data['description']}
 👤 **Responsable:** {data['owner']}
@@ -1355,13 +1397,15 @@ Envía un número decimal.
 • **Impact:** {data['impact']}/3
 • **Confidence:** {data['confidence']*100:.0f}%
 • **Effort:** {data['effort']} sprints
-• **Score:** {score:.2f}
+• **Score RICE:** {score:.2f}
+
+🏆 **Prioridad:** {priority_text} ({priority_emoji})
 
 🔗 La iniciativa ha sido agregada con status "Pending".
 
 💡 **Próximos pasos:**
 • Buscar: `buscar {data['initiative_name']}`
-• Ver todas: `iniciativas`
+• Ver ranking: `iniciativas`
 • Crear otra: `crear`"""
                 
                 send_telegram_message(chat_id, confirmation, parse_mode='Markdown')
@@ -1376,7 +1420,6 @@ Envía un número decimal.
                 error_msg += "\n💡 Prueba nuevamente con: `crear`"
                 send_telegram_message(chat_id, error_msg, parse_mode='Markdown')
             
-            # Limpiar estado
             del user_states[user_id]
     
     except Exception as e:
@@ -1388,11 +1431,38 @@ Envía un número decimal.
 # ===== MAIN =====
 
 if __name__ == '__main__':
-    # Configurar webhook al iniciar
     if TELEGRAM_TOKEN:
         bot_configured = setup_webhook()
         logger.info(f"🤖 Bot webhook configured: {bot_configured}")
     
-    # Ejecutar Flask
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False) Exception as e:
+        logger.error(f"Error formatting initiative: {e}")
+        return f"{index}. **{initiative.get('initiative_name', 'Error de formato')}**"
+
+def format_initiative_summary(initiative, index=None):
+    """Formatear iniciativa en modo resumen para listados con score"""
+    try:
+        name = initiative.get('initiative_name', 'Sin nombre')
+        owner = initiative.get('owner', 'Sin owner')
+        team = initiative.get('team', 'Sin equipo')
+        kpi = initiative.get('main_kpi', 'Sin KPI')
+        status = initiative.get('status', 'Pending')
+        score = initiative.get('score', initiative.get('calculated_score', 0))
+        
+        try:
+            score = float(score) if score else 0
+        except:
+            score = 0
+        
+        # Emoji de prioridad basado en score
+        priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
+        
+        prefix = f"**{index}.** " if index else ""
+        
+        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score:.2f})
+👤 {owner} | 👥 {team} | 📊 {kpi} | 📋 {status}"""
+        
+        return formatted
+        
+    except
