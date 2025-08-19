@@ -320,8 +320,8 @@ def calculate_statistics(initiatives):
         'top_teams': teams.most_common(5),
         'top_owners': owners.most_common(5),
         'top_kpis': kpis.most_common(3),
-        'top_initiatives_by_score': top_initiatives[:10],  # Top 10 por score
-        'sorted_initiatives': sorted_initiatives  # Iniciativas ordenadas por score
+        'top_initiatives_by_score': top_initiatives[:10],
+        'sorted_initiatives': sorted_initiatives
     }
 
 def format_statistics_text(stats):
@@ -598,6 +598,53 @@ def format_initiative_complete(initiative, index=None):
         confidence_pct = f"{confidence*100:.0f}%" if confidence > 0 else "N/A"
         effort_val = f"{effort:.1f} sprints" if effort > 0 else "N/A"
         score_val = f"{score:.2f}" if score > 0 else "N/A"
+        
+        # Emoji de prioridad basado en score
+        priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
+        
+        prefix = f"**{index}.** " if index else ""
+        
+        # Formato COMPLETO para búsquedas
+        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score_val})
+
+📝 **Descripción:**
+{description}
+
+👤 **Responsable:** {owner}
+👥 **Equipo:** {team}
+📊 **KPI Principal:** {kpi}
+🖥️ **Portal:** {portal}
+📋 **Status:** {status}
+
+📈 **Métricas RICE:**
+• Alcance: {reach_pct}
+• Impacto: {impact_val}
+• Confianza: {confidence_pct}
+• Esfuerzo: {effort_val}
+• **Score RICE: {score_val}**
+
+━━━━━━━━━━━━━━━━━━━━━"""
+        
+        return formatted
+        
+    except Exception as e:
+        logger.error(f"Error formatting initiative summary: {e}")
+        return f"{index}. **{initiative.get('initiative_name', 'Error')}**"
+
+def format_initiative_summary(initiative, index=None):
+    """Formatear iniciativa en modo resumen para listados con score"""
+    try:
+        name = initiative.get('initiative_name', 'Sin nombre')
+        owner = initiative.get('owner', 'Sin owner')
+        team = initiative.get('team', 'Sin equipo')
+        kpi = initiative.get('main_kpi', 'Sin KPI')
+        status = initiative.get('status', 'Pending')
+        score = initiative.get('score', initiative.get('calculated_score', 0))
+        
+        try:
+            score = float(score) if score else 0
+        except:
+            score = 0
         
         # Emoji de prioridad basado en score
         priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
@@ -1420,51 +1467,4 @@ if __name__ == '__main__':
     
     # Ejecutar Flask
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)}.** " if index else ""
-        
-        # Formato COMPLETO para búsquedas
-        formatted = f"""{prefix}{priority_emoji} **{name}** (Score: {score_val})
-
-📝 **Descripción:**
-{description}
-
-👤 **Responsable:** {owner}
-👥 **Equipo:** {team}
-📊 **KPI Principal:** {kpi}
-🖥️ **Portal:** {portal}
-📋 **Status:** {status}
-
-📈 **Métricas RICE:**
-• Alcance: {reach_pct}
-• Impacto: {impact_val}
-• Confianza: {confidence_pct}
-• Esfuerzo: {effort_val}
-• **Score RICE: {score_val}**
-
-━━━━━━━━━━━━━━━━━━━━━"""
-        
-        return formatted
-        
-    except Exception as e:
-        logger.error(f"Error formatting initiative summary: {e}")
-        return f"{index}. **{initiative.get('initiative_name', 'Error')}**"
-
-def format_initiative_summary(initiative, index=None):
-    """Formatear iniciativa en modo resumen para listados con score"""
-    try:
-        name = initiative.get('initiative_name', 'Sin nombre')
-        owner = initiative.get('owner', 'Sin owner')
-        team = initiative.get('team', 'Sin equipo')
-        kpi = initiative.get('main_kpi', 'Sin KPI')
-        status = initiative.get('status', 'Pending')
-        score = initiative.get('score', initiative.get('calculated_score', 0))
-        
-        try:
-            score = float(score) if score else 0
-        except:
-            score = 0
-        
-        # Emoji de prioridad basado en score
-        priority_emoji = "🔥" if score >= 2.0 else "⭐" if score >= 1.0 else "📋"
-        
-        prefix = f"**{index
+    app.run(host='0.0.0.0', port=port, debug=False)
