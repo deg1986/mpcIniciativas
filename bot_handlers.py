@@ -1,4 +1,4 @@
-# 🤖 bot_handlers.py - Manejadores del Bot v2.6 - CORREGIDO
+# 🤖 bot_handlers.py - Manejadores del Bot v2.6 - COMPLETO SIN ERRORES
 import logging
 from flask import request
 from config import *
@@ -271,7 +271,7 @@ def handle_search_command_fast(chat_id, query):
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_analyze_command_fast(chat_id):
-    """Análisis optimizado"""
+    """Análisis optimizado con mejor debugging"""
     logger.info(f"📱 Analyze FAST from chat {chat_id}")
     
     send_telegram_message(chat_id, "🤖 **Analizando portfolio...** ⚡")
@@ -281,42 +281,68 @@ def handle_analyze_command_fast(chat_id):
     data = get_initiatives()
     
     if not data.get("success"):
-        send_telegram_message(chat_id, f"❌ Error: {data.get('error')}")
+        send_telegram_message(chat_id, f"❌ Error obteniendo datos: {data.get('error')}")
         return
     
     initiatives = data.get("data", [])
     
     if not initiatives:
-        send_telegram_message(chat_id, "📭 No hay iniciativas.")
+        send_telegram_message(chat_id, "📭 No hay iniciativas para analizar.")
         return
     
     # Estadísticas rápidas primero
-    stats = calculate_statistics_fast(initiatives)
-    stats_text = format_statistics_text_fast(stats)
-    
-    cache_info = " (Cache)" if data.get("cached") else " (Fresh)"
-    stats_text += f"\n⚡ **Datos{cache_info}**"
-    
-    send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
-    
-    # Análisis AI optimizado
-    if GROQ_API_KEY:
-        send_telegram_message(chat_id, "🧠 **Generando análisis estratégico...**")
+    try:
+        stats = calculate_statistics_fast(initiatives)
+        stats_text = format_statistics_text_fast(stats)
         
+        cache_info = " (Cache)" if data.get("cached") else " (Fresh)"
+        stats_text += f"\n⚡ **Datos{cache_info}**"
+        
+        send_telegram_message(chat_id, stats_text, parse_mode='Markdown')
+        logger.info(f"✅ Statistics sent successfully")
+        
+    except Exception as e:
+        logger.error(f"❌ Statistics error: {e}")
+        send_telegram_message(chat_id, f"❌ Error en estadísticas: {str(e)}")
+        return
+    
+    # Análisis AI optimizado con mejor error handling
+    if not GROQ_API_KEY:
+        send_telegram_message(chat_id, "⚠️ **Análisis AI no disponible**\n\nEl sistema no tiene configurada la API key de Groq. Las estadísticas están disponibles arriba.")
+        return
+    
+    try:
+        send_telegram_message(chat_id, "🧠 **Generando análisis estratégico...** (esto puede tomar 10-15s)")
+        
+        logger.info(f"🤖 Starting AI analysis with {len(initiatives)} initiatives")
         analysis = analyze_initiatives_with_llm_fast(initiatives)
+        
+        if not analysis or analysis.strip() == "":
+            send_telegram_message(chat_id, "❌ **Análisis vacío**\n\nEl AI no generó respuesta. Las estadísticas están disponibles arriba.")
+            return
+        
         analysis_time = time.time() - start_time
         
         analysis_text = f"🤖 **ANÁLISIS ESTRATÉGICO** ⚡\n\n{analysis}"
         analysis_text += f"\n\n⏱️ **Tiempo:** {analysis_time:.1f}s"
         
+        # Enviar análisis (dividir si es muy largo)
         if len(analysis_text) > MAX_MESSAGE_LENGTH:
             chunks = [analysis_text[i:i+MAX_MESSAGE_LENGTH] for i in range(0, len(analysis_text), MAX_MESSAGE_LENGTH)]
-            for chunk in chunks:
-                send_telegram_message(chat_id, chunk, parse_mode='Markdown')
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    send_telegram_message(chat_id, chunk, parse_mode='Markdown')
+                else:
+                    send_telegram_message(chat_id, f"**Continuación {i+1}:**\n\n{chunk}", parse_mode='Markdown')
         else:
             send_telegram_message(chat_id, analysis_text, parse_mode='Markdown')
-    else:
-        send_telegram_message(chat_id, "⚠️ Análisis AI no disponible.")
+        
+        logger.info(f"✅ Analysis completed and sent in {analysis_time:.1f}s")
+        
+    except Exception as e:
+        logger.error(f"❌ AI Analysis error: {e}")
+        error_msg = f"❌ **Error en análisis AI:**\n\n{str(e)}\n\n💡 Las estadísticas básicas están disponibles arriba."
+        send_telegram_message(chat_id, error_msg, parse_mode='Markdown')
 
 def handle_status_info(chat_id):
     """Mostrar información sobre comandos de estado"""
@@ -567,6 +593,25 @@ Envía número entre 0-100.
 **Opciones:** 1 (bajo), 2 (medio), 3 (alto)""", parse_mode='Markdown')
                 
             except ValueError:
+                send_telegram_message(chat_id, "❌ Número válido entre 0-100.")
+                return
+        
+        elif step == 'impact':
+            try:
+                impact = int(text.strip())
+                if impact not in [1, 2, 3]:
+                    send_telegram_message(chat_id, "❌ Debe ser 1, 2 o 3.")
+                    return
+                
+                state['data']['impact'] = impact
+                state['step'] = 'confidence'
+                send_telegram_message(chat_id, """🎯 **CONFIDENCE:** ¿% de confianza en el impacto?
+
+Número entre 0-100.
+
+**Ejemplos:** 90, 70, 50""", parse_mode='Markdown')
+                
+            except ValueError:
                 send_telegram_message(chat_id, "❌ Número válido: 1, 2 o 3.")
                 return
         
@@ -646,22 +691,3 @@ Envía número entre 0-100.
         send_telegram_message(chat_id, "❌ Error procesando mensaje.")
         if user_id in user_states:
             del user_states[user_id]
-                send_telegram_message(chat_id, "❌ Número válido entre 0-100.")
-                return
-        
-        elif step == 'impact':
-            try:
-                impact = int(text.strip())
-                if impact not in [1, 2, 3]:
-                    send_telegram_message(chat_id, "❌ Debe ser 1, 2 o 3.")
-                    return
-                
-                state['data']['impact'] = impact
-                state['step'] = 'confidence'
-                send_telegram_message(chat_id, """🎯 **CONFIDENCE:** ¿% de confianza en el impacto?
-
-Número entre 0-100.
-
-**Ejemplos:** 90, 70, 50""", parse_mode='Markdown')
-                
-            except ValueError:
