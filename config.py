@@ -60,10 +60,10 @@ MAX_KPI_LENGTH = 255
 
 # ===== FILTROS PREDEFINIDOS =====
 STATUS_FILTERS = {
-    'active': ACTIVE_STATUSES,
-    'sprint': SPRINT_STATUSES,
-    'production': PRODUCTION_STATUSES,
     'pending': ['Pending'],
-    'cancelled': ['Cancelled'],
-    'on_hold': ['On Hold']
+    'sprint': ['Sprint'],
+    'production': ['Production'],
+    'monitoring': ['Monitoring'],
+    'cancelled': ['Discarded'],
+    'hold': ['Backlog']
 }
