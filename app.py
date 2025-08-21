@@ -54,7 +54,7 @@ def get_cached_initiatives():
     try:
         url = f"{NOCODB_BASE_URL}/tables/{NOCODB_TABLE_ID}/records"
         headers = {'accept': 'application/json', 'xc-token': NOCODB_TOKEN}
-        params = {'limit': 200}  # Aumentar límite
+        params = {'limit': 1000}  # Aumentar límite
         
         response = requests.get(url, headers=headers, params=params, timeout=15)  # Reducir timeout
         
