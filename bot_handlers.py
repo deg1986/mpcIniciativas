@@ -114,24 +114,14 @@ Pending → Sprint → Production → Monitoring
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_filter_by_status(chat_id, status):
-    """Filtrar iniciativas por estado específico - SIMPLIFICADO"""
+    """Filtrar iniciativas por estado específico"""
     logger.info(f"📱 Filter by status '{status}' from chat {chat_id}")
-    
-    # Mapear comandos simples a filtros predefinidos
-    status_mapping = {
-        'pending': 'pending',
-        'sprint': 'sprint', 
-        'production': 'production',
-        'monitoring': 'monitoring',
-        'cancelled': 'cancelled',
-        'hold': 'hold'
-    }
-    
-    filter_key = status.lower()
-status_list = STATUS_FILTERS.get(filter_key)
 
-if not status_list:
-    send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
+    filter_key = status.lower()
+    status_list = STATUS_FILTERS.get(filter_key)
+
+    if not status_list:
+        send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
 
 **Comandos válidos:**
 • pending - Ver pendientes
@@ -142,27 +132,23 @@ if not status_list:
 • hold - Ver pausadas
 
 **Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
-    # return  # ← si lo dejás para debug, que esté comentado
+        return
 
-    
     send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
-    
+
     from database import get_initiatives_by_status
-    status_list = STATUS_FILTERS[filter_key]
     data = get_initiatives_by_status(status_list)
-    
+
     if not data.get("success"):
         send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
-        # return  # ← solo si querés dejarlo como recordatorio
-    
+        return
+
     initiatives = data.get("data", [])
-    
+
     if not initiatives:
         send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{status}'**\n\n💡 Prueba con otro estado o escribe: estados")
-        # return  # ← si lo dejaste para debug
+        return
 
-    
-    # Emoji para cada estado
     status_emojis = {
         'pending': '⏳',
         'sprint': '🔧',
@@ -171,24 +157,24 @@ if not status_list:
         'cancelled': '❌',
         'hold': '⏸️'
     }
-    
-    emoji = status_emojis.get(status.lower(), '📋')
-    
+
+    emoji = status_emojis.get(filter_key, '📋')
     text = f"{emoji} **INICIATIVAS - {status.upper()}** ({len(initiatives)} encontradas)\n\n"
-    
+
     for i, init in enumerate(initiatives[:MAX_RESULTS_LIST], 1):
         formatted = format_initiative_summary_fast(init, i)
         text += f"{formatted}\n{emoji} Estado: {init.get('status', 'N/A')}\n\n"
-    
+
     if len(initiatives) > MAX_RESULTS_LIST:
         text += f"📌 **{len(initiatives) - MAX_RESULTS_LIST} iniciativas más con este estado...**\n"
-    
-    text += f"\n💡 **Tip:** Escribe buscar para encontrar iniciativas específicas en este estado."
-    
-    send_telegram_message(chat_id, text, parse_mode='Markdown')# 🤖 bot_handlers.py - Manejadores del Bot v2.5
+
+    text += "\n💡 **Tip:** Escribe buscar para encontrar iniciativas específicas en este estado."
+
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
+
 import logging
 from flask import request
-from config import *
+from config import STATUS_FILTERS, MAX_RESULTS_LIST, MAX_RESULTS_SEARCH, MAX_INITIATIVE_NAME, MAX_DESCRIPTION, MAX_OWNER_NAME, MAX_KPI_LENGTH, VALID_TEAMS, VALID_PORTALS, GROQ_API_KEY
 from database import get_initiatives, search_initiatives, create_initiative, calculate_score_fast
 from analytics import calculate_statistics_fast, format_statistics_text_fast, analyze_initiatives_with_llm_fast
 from utils import send_telegram_message
