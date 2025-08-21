@@ -142,7 +142,8 @@ if not status_list:
 • hold - Ver pausadas
 
 **Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
-    return
+    # return  # ← si lo dejás para debug, que esté comentado
+
     
     send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
     
@@ -258,7 +259,7 @@ def setup_telegram_routes(app):
             
         except Exception as e:
             logger.error(f"❌ Webhook error: {e}")
-            return "ERROR", 500
+            return "Handled with error", 200
 
 def handle_natural_message_fast(chat_id, text):
     """Manejar mensajes naturales optimizado"""
