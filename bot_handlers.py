@@ -78,73 +78,76 @@ def handle_production_initiatives(chat_id):
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_status_info(chat_id):
-    """Mostrar información sobre estados disponibles"""
-    text = """📊 **ESTADOS DE INICIATIVAS** 
+    """Mostrar información sobre comandos de estado"""
+    text = """📊 **Comandos de Estado Disponibles** 
 
-**🔄 Estados Disponibles:**
-• `Pending` - Pendiente de iniciar
-• `In Sprint` - En desarrollo activo
-• `Production` - Implementada y activa
-• `Monitoring` - En monitoreo post-implementación
-• `Cancelled` - Cancelada
-• `On Hold` - Pausada temporalmente
+**🔄 Filtros Rápidos:**
+• pending - Ver iniciativas pendientes
+• sprint - Ver las en desarrollo activo
+• production - Ver las implementadas
+• monitoring - Ver las en monitoreo
+• cancelled - Ver las canceladas
+• hold - Ver las pausadas
 
-**⚡ Filtros Rápidos:**
-• `sprint` - Solo las en desarrollo
-• `produccion` - Solo las implementadas
-• `estado Pending` - Solo las pendientes
-• `estado On Hold` - Solo las pausadas
+**📈 Estados del Flujo:**
+⏳ Pending - Pendiente de iniciar
+🔧 Sprint - En desarrollo activo
+🚀 Production - Implementada y activa
+📊 Monitoring - En monitoreo post-implementación
+❌ Cancelled - Cancelada
+⏸️ Hold - Pausada temporalmente
 
-**📈 Flujo Típico:**
-Pending → In Sprint → Production → Monitoring
+**📋 Flujo Típico:**
+Pending → Sprint → Production → Monitoring
 
-💡 **Tip:** Usa `estado <nombre>` para filtrar por cualquier estado específico."""
+**💡 Ejemplos de uso:**
+• Escribe: pending
+• Escribe: sprint
+• Escribe: production
+
+**🔍 Para búsquedas específicas:**
+• buscar Product sprint - Buscar en equipo + estado
+• buscar API production - Buscar implementadas
+
+**Tip:** Solo escribe la palabra del estado, sin símbolos ni comillas."""
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def handle_filter_by_status(chat_id, status):
-    """Filtrar iniciativas por estado específico"""
+    """Filtrar iniciativas por estado específico - SIMPLIFICADO"""
     logger.info(f"📱 Filter by status '{status}' from chat {chat_id}")
     
-    # Normalizar el status
-    status_normalized = status.title().replace('_', ' ')
-    
-    # Mapear algunos alias comunes
-    status_aliases = {
-        'pending': 'Pending',
-        'pendiente': 'Pending',
-        'sprint': 'In Sprint',
-        'desarrollo': 'In Sprint',
-        'production': 'Production',
-        'produccion': 'Production',
-        'monitoring': 'Monitoring',
-        'monitoreo': 'Monitoring',
-        'cancelled': 'Cancelled',
-        'cancelada': 'Cancelled',
-        'hold': 'On Hold',
-        'pausa': 'On Hold'
+    # Mapear comandos simples a filtros predefinidos
+    status_mapping = {
+        'pending': 'pending',
+        'sprint': 'sprint', 
+        'production': 'production',
+        'monitoring': 'monitoring',
+        'cancelled': 'cancelled',
+        'hold': 'hold'
     }
     
-    final_status = status_aliases.get(status.lower(), status_normalized)
+    filter_key = status_mapping.get(status.lower())
     
-    if final_status not in VALID_STATUSES:
+    if not filter_key:
         send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
 
-**Estados válidos:**
-{chr(10).join([f'• {s}' for s in VALID_STATUSES])}
+**Comandos válidos:**
+• pending - Ver pendientes
+• sprint - Ver en desarrollo
+• production - Ver implementadas
+• monitoring - Ver en monitoreo
+• cancelled - Ver canceladas
+• hold - Ver pausadas
 
-**Ejemplos:**
-• `estado Pending`
-• `estado In Sprint`
-• `estado Production`
-
-💡 **Tip:** Usa `estados` para ver todos los disponibles.""", parse_mode='Markdown')
+**Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
         return
     
-    send_telegram_message(chat_id, f"⚡ **Filtrando por estado: {final_status}...**")
+    send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
     
     from database import get_initiatives_by_status
-    data = get_initiatives_by_status([final_status])
+    status_list = STATUS_FILTERS[filter_key]
+    data = get_initiatives_by_status(status_list)
     
     if not data.get("success"):
         send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
@@ -153,31 +156,31 @@ def handle_filter_by_status(chat_id, status):
     initiatives = data.get("data", [])
     
     if not initiatives:
-        send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{final_status}'**\n\n💡 Prueba con otro estado o usa `estados` para ver todos los disponibles.")
+        send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{status}'**\n\n💡 Prueba con otro estado o escribe: estados")
         return
     
     # Emoji para cada estado
     status_emojis = {
-        'Pending': '⏳',
-        'In Sprint': '🔧',
-        'Production': '🚀',
-        'Monitoring': '📊',
-        'Cancelled': '❌',
-        'On Hold': '⏸️'
+        'pending': '⏳',
+        'sprint': '🔧',
+        'production': '🚀',
+        'monitoring': '📊',
+        'cancelled': '❌',
+        'hold': '⏸️'
     }
     
-    emoji = status_emojis.get(final_status, '📋')
+    emoji = status_emojis.get(status.lower(), '📋')
     
-    text = f"{emoji} **INICIATIVAS - {final_status.upper()}** ({len(initiatives)} encontradas)\n\n"
+    text = f"{emoji} **INICIATIVAS - {status.upper()}** ({len(initiatives)} encontradas)\n\n"
     
     for i, init in enumerate(initiatives[:MAX_RESULTS_LIST], 1):
         formatted = format_initiative_summary_fast(init, i)
-        text += f"{formatted}\n{emoji} Estado: {final_status}\n\n"
+        text += f"{formatted}\n{emoji} Estado: {init.get('status', 'N/A')}\n\n"
     
     if len(initiatives) > MAX_RESULTS_LIST:
         text += f"📌 **{len(initiatives) - MAX_RESULTS_LIST} iniciativas más con este estado...**\n"
     
-    text += f"\n💡 **Tip:** Usa `buscar` para encontrar iniciativas específicas en este estado."
+    text += f"\n💡 **Tip:** Escribe buscar para encontrar iniciativas específicas en este estado."
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')# 🤖 bot_handlers.py - Manejadores del Bot v2.5
 import logging
@@ -230,18 +233,20 @@ def setup_telegram_routes(app):
                     handle_search_command_fast(chat_id, query)
                 else:
                     send_telegram_message(chat_id, "🔍 **¿Qué quieres buscar?**\n\nEjemplos:\n• `buscar Product`\n• `buscar API`")
-            elif text in ['/sprint', 'sprint', 'en desarrollo']:
+            elif text in ['/sprint', 'sprint', 'desarrollo', 'dev']:
                 handle_sprint_initiatives(chat_id)
-            elif text in ['/produccion', 'produccion', 'production', 'implementadas']:
+            elif text in ['/production', 'production', 'produccion', 'prod']:
                 handle_production_initiatives(chat_id)
-            elif text in ['/estados', 'estados', 'status']:
+            elif text in ['/pending', 'pending', 'pendiente']:
+                handle_filter_by_status(chat_id, 'pending')
+            elif text in ['/monitoring', 'monitoring', 'monitoreo']:
+                handle_filter_by_status(chat_id, 'monitoring')
+            elif text in ['/cancelled', 'cancelled', 'canceladas']:
+                handle_filter_by_status(chat_id, 'cancelled')
+            elif text in ['/hold', 'hold', 'pausa', 'pausadas']:
+                handle_filter_by_status(chat_id, 'hold')
+            elif text in ['/estados', 'estados', 'status', 'comandos']:
                 handle_status_info(chat_id)
-            elif text.startswith(('estado ', '/estado ')):
-                status = text.split(' ', 1)[1] if ' ' in text else ""
-                if status:
-                    handle_filter_by_status(chat_id, status)
-                else:
-                    handle_status_info(chat_id)
             else:
                 if user_id in user_states:
                     handle_text_message(chat_id, user_id, message['text'])
@@ -259,26 +264,26 @@ def handle_natural_message_fast(chat_id, text):
     text_lower = text.lower()
     
     if any(word in text_lower for word in ['iniciativa', 'proyecto', 'lista']):
-        send_telegram_message(chat_id, "🎯 Ver iniciativas: `iniciativas`")
+        send_telegram_message(chat_id, "🎯 Ver iniciativas: iniciativas")
     elif any(word in text_lower for word in ['buscar', 'encontrar']):
-        send_telegram_message(chat_id, "🔍 Buscar: `buscar <término>`")
+        send_telegram_message(chat_id, "🔍 Buscar: buscar API")
     elif any(word in text_lower for word in ['crear', 'nueva']):
-        send_telegram_message(chat_id, "🆕 Crear: `crear`")
+        send_telegram_message(chat_id, "🆕 Crear: crear")
     elif any(word in text_lower for word in ['análisis', 'analizar']):
-        send_telegram_message(chat_id, "📊 Análisis: `analizar`")
+        send_telegram_message(chat_id, "📊 Análisis: analizar")
     elif any(word in text_lower for word in ['sprint', 'desarrollo', 'dev']):
-        send_telegram_message(chat_id, "🔧 En desarrollo: `sprint`")
+        send_telegram_message(chat_id, "🔧 En desarrollo: sprint")
     elif any(word in text_lower for word in ['producción', 'production', 'implementado']):
-        send_telegram_message(chat_id, "🚀 Implementadas: `produccion`")
-    elif any(word in text_lower for word in ['estado', 'status']):
-        send_telegram_message(chat_id, "📊 Estados: `estados` o `estado <nombre>`")
+        send_telegram_message(chat_id, "🚀 Implementadas: production")
+    elif any(word in text_lower for word in ['estado', 'status', 'comando']):
+        send_telegram_message(chat_id, "📊 Estados: estados")
     else:
         send_telegram_message(chat_id, """👋 **Comandos disponibles:**
 
-**📋 Básicos:** `iniciativas`, `buscar`, `crear`, `analizar`
-**📊 Estados:** `sprint`, `produccion`, `estados`
+**📋 Básicos:** iniciativas, buscar, crear, analizar
+**📊 Estados:** pending, sprint, production, monitoring
 
-💡 **Tip:** Escribe `ayuda` para ver todos los comandos.""")
+💡 **Tip:** Escribe ayuda para ver todos los comandos.""")
 
 def handle_start_command(chat_id):
     """Comando start optimizado"""
@@ -286,33 +291,34 @@ def handle_start_command(chat_id):
     
     text = """🎯 **Bot Saludia v2.6** ⚡ GESTIÓN DE ESTADOS
 
-🢊 Asistente de gestión de iniciativas para equipos Saludia.
+🔹 Asistente de gestión de iniciativas para equipos Saludia.
 
 **📋 Comandos principales:**
-• `iniciativas` - Lista ordenada por score RICE 🏆
-• `buscar <término>` - Búsqueda rápida
-• `crear` - Nueva iniciativa con RICE
-• `analizar` - Análisis AI del portfolio
+• iniciativas - Lista ordenada por score RICE
+• buscar Product - Búsqueda por equipo
+• crear - Nueva iniciativa con RICE
+• analizar - Análisis AI del portfolio
 
-**📊 Gestión por Estados:**
-• `sprint` - Iniciativas en desarrollo 🔧
-• `produccion` - Implementadas y activas 🚀
-• `estado <status>` - Filtrar por estado específico
-• `estados` - Ver todos los estados disponibles
+**📊 Filtros por Estado:**
+• pending - Iniciativas pendientes
+• sprint - En desarrollo activo
+• production - Implementadas y activas
+• monitoring - En monitoreo
+• cancelled - Canceladas
+• hold - Pausadas temporalmente
 
-**🔍 Ejemplos:**
-• `buscar Product` - Por equipo
-• `buscar API` - Por tecnología
-• `estado Pending` - Solo pendientes
-• `sprint` - En desarrollo
+**🔍 Ejemplos de búsqueda:**
+• buscar Product - Por equipo
+• buscar API - Por tecnología
+• buscar Juan - Por responsable
 
 **⚡ Nuevo en v2.6:**
-• Seguimiento de estados de iniciativas
-• Filtros por desarrollo y producción
+• Comandos simples sin símbolos raros
+• Filtros claros por estado
 • API con paginación avanzada
-• Cache optimizado por filtros
+• Cache optimizado
 
-💡 **Tip:** No uses `/` - solo escribe la palabra."""
+💡 **Tip:** Escribe solo la palabra, sin barras ni comillas."""
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
