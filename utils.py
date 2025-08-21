@@ -1,4 +1,4 @@
-# 🔧 utils.py - Utilidades y Helpers v2.6
+# 🔧 utils.py - Utilidades y Helpers v2.6 - CORREGIDO
 import requests
 import logging
 from config import *
@@ -136,14 +136,16 @@ def get_priority_text(score):
         return "Baja"
 
 def get_status_emoji(status):
-    """Obtener emoji para estado"""
+    """Obtener emoji para estado - ESTADOS REALES DE LA DB"""
     status_emojis = {
         'Pending': '⏳',
-        'In Sprint': '🔧',
+        'Reviewed': '👁️',
+        'Prioritized': '⭐',
+        'Backlog': '📝',
+        'Sprint': '🔧',
         'Production': '🚀',
         'Monitoring': '📊',
-        'Cancelled': '❌',
-        'On Hold': '⏸️'
+        'Discarded': '❌'
     }
     return status_emojis.get(status, '📋')
 
@@ -151,11 +153,13 @@ def get_status_color(status):
     """Obtener código de color para estado (para futuras integraciones)"""
     status_colors = {
         'Pending': '#FFA500',      # Naranja
-        'In Sprint': '#1E90FF',    # Azul
-        'Production': '#32CD32',   # Verde
-        'Monitoring': '#9370DB',   # Púrpura
-        'Cancelled': '#DC143C',    # Rojo
-        'On Hold': '#696969'       # Gris
+        'Reviewed': '#4169E1',     # Royal Blue
+        'Prioritized': '#FFD700',  # Gold
+        'Backlog': '#708090',      # Slate Gray
+        'Sprint': '#1E90FF',       # Dodger Blue
+        'Production': '#32CD32',   # Lime Green
+        'Monitoring': '#9370DB',   # Medium Purple
+        'Discarded': '#DC143C'     # Crimson
     }
     return status_colors.get(status, '#808080')
 
@@ -291,25 +295,28 @@ def validate_status(status):
     return status in VALID_STATUSES
 
 def normalize_status(status_input):
-    """Normalizar input de estado a formato válido"""
+    """Normalizar input de estado a formato válido - ESTADOS REALES"""
     # Mapear algunos alias comunes
     status_aliases = {
         'pending': 'Pending',
         'pendiente': 'Pending',
-        'sprint': 'In Sprint',
-        'desarrollo': 'In Sprint',
-        'dev': 'In Sprint',
+        'reviewed': 'Reviewed',
+        'revisada': 'Reviewed',
+        'prioritized': 'Prioritized',
+        'priorizada': 'Prioritized',
+        'backlog': 'Backlog',
+        'sprint': 'Sprint',
+        'desarrollo': 'Sprint',
+        'dev': 'Sprint',
         'production': 'Production',
         'produccion': 'Production',
         'prod': 'Production',
         'monitoring': 'Monitoring',
         'monitoreo': 'Monitoring',
-        'cancelled': 'Cancelled',
-        'cancelada': 'Cancelled',
-        'canceled': 'Cancelled',
-        'hold': 'On Hold',
-        'pausa': 'On Hold',
-        'pausada': 'On Hold'
+        'discarded': 'Discarded',
+        'descartada': 'Discarded',
+        'cancelled': 'Discarded',  # Mapear cancelled a discarded
+        'cancelada': 'Discarded'
     }
     
     # Normalizar input
@@ -329,14 +336,16 @@ def normalize_status(status_input):
     return None
 
 def get_workflow_next_status(current_status):
-    """Obtener siguiente estado en el flujo típico"""
+    """Obtener siguiente estado en el flujo típico - FLUJO REAL"""
     workflow = {
-        'Pending': 'In Sprint',
-        'In Sprint': 'Production',
+        'Pending': 'Reviewed',
+        'Reviewed': 'Prioritized',
+        'Prioritized': 'Backlog',
+        'Backlog': 'Sprint',
+        'Sprint': 'Production',
         'Production': 'Monitoring',
-        'Monitoring': None,  # Estado final
-        'Cancelled': None,   # Estado final
-        'On Hold': 'Pending' # Vuelve a pending
+        'Monitoring': None,   # Estado final
+        'Discarded': None     # Estado final
     }
     return workflow.get(current_status)
 
