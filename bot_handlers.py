@@ -127,10 +127,11 @@ def handle_filter_by_status(chat_id, status):
         'hold': 'hold'
     }
     
-    filter_key = status_mapping.get(status.lower())
-    
-    if not filter_key:
-        send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
+    filter_key = status.lower()
+status_list = STATUS_FILTERS.get(filter_key)
+
+if not status_list:
+    send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
 
 **Comandos válidos:**
 • pending - Ver pendientes
@@ -141,7 +142,7 @@ def handle_filter_by_status(chat_id, status):
 • hold - Ver pausadas
 
 **Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
-        return
+    return
     
     send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
     
