@@ -30,17 +30,18 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
         if offset:
             params['offset'] = offset
             
-        # FIX: Filtro por status usando sintaxis correcta de NocoDB
+        # FIX: Filtro por status usando sintaxis correcta de NocoDB con URL encoding
         if status_filter:
             if isinstance(status_filter, list):
-                # Para múltiples estados - SINTAXIS CORREGIDA
                 if len(status_filter) == 1:
-                    # Un solo estado
+                    # Un solo estado - URL encoded
                     params['where'] = f"(status,eq,{status_filter[0]})"
                 else:
-                    # Múltiples estados - usar OR
-                    conditions = " or ".join([f"(status,eq,{status})" for status in status_filter])
-                    params['where'] = f"({conditions})"
+                    # Múltiples estados - usar OR con paréntesis
+                    conditions = []
+                    for status in status_filter:
+                        conditions.append(f"(status,eq,{status})")
+                    params['where'] = "(" + ",or,".join(conditions) + ")"
             else:
                 # Para un solo estado
                 params['where'] = f"(status,eq,{status_filter})"
