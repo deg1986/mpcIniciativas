@@ -174,7 +174,7 @@ def handle_filter_by_status(chat_id, status):
 
 import logging
 from flask import request
-from config import STATUS_FILTERS, MAX_RESULTS_LIST, MAX_RESULTS_SEARCH, MAX_INITIATIVE_NAME, MAX_DESCRIPTION, MAX_OWNER_NAME, MAX_KPI_LENGTH, VALID_TEAMS, VALID_PORTALS, GROQ_API_KEY
+from config import STATUS_FILTERS, MAX_RESULTS_LIST, MAX_RESULTS_SEARCH, MAX_INITIATIVE_NAME, MAX_DESCRIPTION, MAX_OWNER_NAME, MAX_KPI_LENGTH, VALID_TEAMS, VALID_PORTALS, GROQ_API_KEY, MAX_MESSAGE_LENGTH
 from database import get_initiatives, search_initiatives, create_initiative, calculate_score_fast
 from analytics import calculate_statistics_fast, format_statistics_text_fast, analyze_initiatives_with_llm_fast
 from utils import send_telegram_message
