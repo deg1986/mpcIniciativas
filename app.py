@@ -1,8 +1,6 @@
 # 🚀 MCP Saludia OPTIMIZED v2.4 - Gestión de Iniciativas con Estadísticas Avanzadas
 import os
 import json
-import asyncio
-import aiohttp
 from datetime import datetime
 from flask import Flask, jsonify, request
 from flask_cors import CORS
