@@ -1,4 +1,4 @@
-# 📊 analytics.py - Análisis y Estadísticas v2.5
+# 📊 analytics.py - Análisis y Estadísticas v2.6
 import requests
 import logging
 from collections import Counter
@@ -20,6 +20,7 @@ def calculate_statistics_fast(initiatives):
     owners = Counter(init.get('owner', 'Sin owner').strip() for init in sorted_initiatives if isinstance(init, dict))
     kpis = Counter(init.get('main_kpi', 'Sin KPI').strip() for init in sorted_initiatives if isinstance(init, dict))
     portals = Counter(init.get('portal', 'Sin portal').strip() for init in sorted_initiatives if isinstance(init, dict))
+    statuses = Counter(init.get('status', 'Sin estado').strip() for init in sorted_initiatives if isinstance(init, dict))
     
     # Métricas numéricas optimizadas
     metrics = []
@@ -45,7 +46,8 @@ def calculate_statistics_fast(initiatives):
                         'name': init.get('initiative_name', 'Sin nombre'),
                         'score': score,
                         'team': init.get('team', 'Sin equipo'),
-                        'owner': init.get('owner', 'Sin owner')
+                        'owner': init.get('owner', 'Sin owner'),
+                        'status': init.get('status', 'Sin estado')
                     })
             except:
                 continue
@@ -66,6 +68,7 @@ def calculate_statistics_fast(initiatives):
     owners_pct = {owner: (count/total)*100 for owner, count in owners.most_common()}
     kpis_pct = {kpi: (count/total)*100 for kpi, count in kpis.most_common()}
     portals_pct = {portal: (count/total)*100 for portal, count in portals.most_common()}
+    statuses_pct = {status: (count/total)*100 for status, count in statuses.most_common()}
     
     return {
         'total_initiatives': total,
@@ -73,10 +76,12 @@ def calculate_statistics_fast(initiatives):
         'owners': owners_pct,
         'kpis': kpis_pct,
         'portals': portals_pct,
+        'statuses': statuses_pct,
         'average_metrics': avg_metrics,
         'top_teams': teams.most_common(5),
         'top_owners': owners.most_common(5),
         'top_kpis': kpis.most_common(3),
+        'top_statuses': statuses.most_common(),
         'top_initiatives_by_score': top_initiatives[:10],
         'sorted_initiatives': sorted_initiatives
     }
@@ -94,8 +99,18 @@ def format_statistics_text_fast(stats):
     if stats.get('top_initiatives_by_score'):
         lines.append("🏆 **TOP 5 INICIATIVAS POR SCORE:**")
         for i, init in enumerate(stats['top_initiatives_by_score'][:5], 1):
+            status_emoji = get_status_emoji(init.get('status', ''))
             lines.append(f"{i}. **{init['name']}** - Score: {init['score']:.2f}")
-            lines.append(f"   👥 {init['team']} | 👤 {init['owner']}\n")
+            lines.append(f"   👥 {init['team']} | 👤 {init['owner']} | {status_emoji} {init['status']}\n")
+    
+    # Distribución por estados
+    if stats.get('top_statuses'):
+        lines.append("📊 **DISTRIBUCIÓN POR ESTADOS:**")
+        for status, count in stats['top_statuses']:
+            percentage = stats['statuses'][status]
+            emoji = get_status_emoji(status)
+            lines.append(f"• {emoji} {status}: {count} iniciativas ({percentage:.1f}%)")
+        lines.append("")
     
     # Distribución por equipos
     lines.append("👥 **DISTRIBUCIÓN POR EQUIPOS:**")
@@ -111,7 +126,7 @@ def format_statistics_text_fast(stats):
     
     # Métricas promedio
     if stats['average_metrics']:
-        lines.append("\n📊 **MÉTRICAS PROMEDIO:**")
+        lines.append("\n📈 **MÉTRICAS PROMEDIO:**")
         metrics = stats['average_metrics']
         lines.extend([
             f"• Alcance: {metrics.get('reach', 0):.1f}%",
@@ -122,6 +137,18 @@ def format_statistics_text_fast(stats):
         ])
     
     return "\n".join(lines)
+
+def get_status_emoji(status):
+    """Obtener emoji para estado"""
+    status_emojis = {
+        'Pending': '⏳',
+        'In Sprint': '🔧',
+        'Production': '🚀',
+        'Monitoring': '📊',
+        'Cancelled': '❌',
+        'On Hold': '⏸️'
+    }
+    return status_emojis.get(status, '📋')
 
 def query_llm_optimized(prompt, context=None):
     """LLM optimizado con timeout reducido"""
@@ -142,14 +169,16 @@ def query_llm_optimized(prompt, context=None):
 - Marketplace farmacéutico (droguerías + sellers/laboratorios)
 - Equipos: Product, Sales, Ops, CS, Controlling, Growth
 - Score RICE = (Reach × Impact × Confidence) / Effort
+- Estados: Pending → In Sprint → Production → Monitoring
 
 💡 RESPUESTA REQUERIDA (MÁXIMO 600 PALABRAS):
 1. 🏆 Top 3 iniciativas por score y por qué destacan
-2. ⚖️ Balance entre equipos y recursos
-3. 🔴 Iniciativas sub-optimizadas (bajo score) y mejoras
-4. 📈 2-3 recomendaciones estratégicas priorizadas
+2. 📊 Análisis de distribución por estados (workflow)
+3. ⚖️ Balance entre equipos y recursos
+4. 🔴 Iniciativas sub-optimizadas (bajo score) y mejoras
+5. 📈 2-3 recomendaciones estratégicas priorizadas
 
-Sé CONCISO, ESPECÍFICO y ACCIONABLE. Enfócate en insights de alto valor."""
+Sé CONCISO, ESPECÍFICO y ACCIONABLE. Enfócate en insights de alto valor considerando el flujo de estados."""
 
         messages = [{"role": "system", "content": system_message}]
         
@@ -189,7 +218,7 @@ def analyze_initiatives_with_llm_fast(initiatives):
         # Estadísticas rápidas
         stats = calculate_statistics_fast(initiatives)
         
-        # Contexto compacto
+        # Contexto compacto con información de estados
         context_lines = [
             f"PORTFOLIO SALUDIA ({stats['total_initiatives']} iniciativas):\n",
             "🏆 TOP 5 POR SCORE:"
@@ -197,20 +226,28 @@ def analyze_initiatives_with_llm_fast(initiatives):
         
         # Solo top 5 para reducir contexto
         for i, init in enumerate(stats.get('top_initiatives_by_score', [])[:5], 1):
-            context_lines.append(f"{i}. {init['name']} - {init['score']:.2f} ({init['team']})")
+            status_emoji = get_status_emoji(init.get('status', ''))
+            context_lines.append(f"{i}. {init['name']} - Score: {init['score']:.2f} ({init['team']}) {status_emoji} {init['status']}")
+        
+        # Distribución por estados
+        context_lines.append(f"\n📊 ESTADOS:")
+        for status, count in stats.get('top_statuses', []):
+            percentage = stats['statuses'][status]
+            emoji = get_status_emoji(status)
+            context_lines.append(f"• {emoji} {status}: {count} ({percentage:.0f}%)")
         
         context_lines.extend([
-            f"\n📊 PROMEDIOS: Score={stats['average_metrics'].get('score', 0):.2f}, Reach={stats['average_metrics'].get('reach', 0):.0f}%",
-            f"👥 EQUIPOS: {', '.join([f'{t}({c})' for t, c in stats['top_teams'][:3]])}"
+            f"\n📈 PROMEDIOS: Score={stats['average_metrics'].get('score', 0):.2f}, Reach={stats['average_metrics'].get('reach', 0):.0f}%",
+            f"👥 EQUIPOS TOP: {', '.join([f'{t}({c})' for t, c in stats['top_teams'][:3]])}"
         ])
         
         context = "\n".join(context_lines)
         
-        prompt = "Analiza este portfolio priorizando por score RICE. Sé conciso y específico."
+        prompt = "Analiza este portfolio priorizando por score RICE y considerando el flujo de estados. Sé conciso y específico."
         
         result = query_llm_optimized(prompt, context)
         return result.get("response", "Error analizando iniciativas.")
         
     except Exception as e:
         logger.error(f"❌ Analysis error: {e}")
-        return "Error en el análisis. Datos básicos están disponibles."
+        return "Error en el análisis. Datos básicos están disponibles."os están disponibles."
