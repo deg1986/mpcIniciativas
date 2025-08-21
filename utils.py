@@ -1,4 +1,4 @@
-# 🔧 utils.py - Utilidades y Helpers v2.5
+# 🔧 utils.py - Utilidades y Helpers v2.6
 import requests
 import logging
 from config import *
@@ -105,7 +105,10 @@ def format_error_message(error, context=""):
         "validation": "⚠️ Error de validación en los datos.",
         "unauthorized": "🔐 Error de autorización. Contacta soporte.",
         "not found": "🔍 Recurso no encontrado.",
-        "server error": "🖥️ Error del servidor. Intenta más tarde."
+        "server error": "🖥️ Error del servidor. Intenta más tarde.",
+        "404": "🔍 No encontrado. Verifica filtros o estado.",
+        "400": "⚠️ Solicitud incorrecta. Revisa parámetros.",
+        "500": "🖥️ Error interno del servidor."
     }
     
     for key, message in error_mappings.items():
@@ -131,6 +134,30 @@ def get_priority_text(score):
         return "Media"
     else:
         return "Baja"
+
+def get_status_emoji(status):
+    """Obtener emoji para estado"""
+    status_emojis = {
+        'Pending': '⏳',
+        'In Sprint': '🔧',
+        'Production': '🚀',
+        'Monitoring': '📊',
+        'Cancelled': '❌',
+        'On Hold': '⏸️'
+    }
+    return status_emojis.get(status, '📋')
+
+def get_status_color(status):
+    """Obtener código de color para estado (para futuras integraciones)"""
+    status_colors = {
+        'Pending': '#FFA500',      # Naranja
+        'In Sprint': '#1E90FF',    # Azul
+        'Production': '#32CD32',   # Verde
+        'Monitoring': '#9370DB',   # Púrpura
+        'Cancelled': '#DC143C',    # Rojo
+        'On Hold': '#696969'       # Gris
+    }
+    return status_colors.get(status, '#808080')
 
 def format_percentage(value, decimals=1):
     """Formatear porcentaje"""
@@ -249,7 +276,8 @@ def format_initiative_quick(initiative):
         name = safe_get(initiative, 'initiative_name', 'Unknown')
         team = safe_get(initiative, 'team', 'No team')
         score = safe_get(initiative, 'score', 0)
-        return f"{name} ({team}) - Score: {score}"
+        status = safe_get(initiative, 'status', 'No status')
+        return f"{name} ({team}) - Score: {score} - {status}"
     except:
         return "Invalid initiative data"
 
@@ -257,3 +285,69 @@ def batch_process(items, batch_size=10):
     """Procesar items en lotes"""
     for i in range(0, len(items), batch_size):
         yield items[i:i + batch_size]
+
+def validate_status(status):
+    """Validar si un estado es válido"""
+    return status in VALID_STATUSES
+
+def normalize_status(status_input):
+    """Normalizar input de estado a formato válido"""
+    # Mapear algunos alias comunes
+    status_aliases = {
+        'pending': 'Pending',
+        'pendiente': 'Pending',
+        'sprint': 'In Sprint',
+        'desarrollo': 'In Sprint',
+        'dev': 'In Sprint',
+        'production': 'Production',
+        'produccion': 'Production',
+        'prod': 'Production',
+        'monitoring': 'Monitoring',
+        'monitoreo': 'Monitoring',
+        'cancelled': 'Cancelled',
+        'cancelada': 'Cancelled',
+        'canceled': 'Cancelled',
+        'hold': 'On Hold',
+        'pausa': 'On Hold',
+        'pausada': 'On Hold'
+    }
+    
+    # Normalizar input
+    normalized = status_input.strip()
+    
+    # Buscar en aliases
+    alias_result = status_aliases.get(normalized.lower())
+    if alias_result:
+        return alias_result
+    
+    # Buscar coincidencia exacta en estados válidos
+    for valid_status in VALID_STATUSES:
+        if valid_status.lower() == normalized.lower():
+            return valid_status
+    
+    # Si no se encuentra, devolver None
+    return None
+
+def get_workflow_next_status(current_status):
+    """Obtener siguiente estado en el flujo típico"""
+    workflow = {
+        'Pending': 'In Sprint',
+        'In Sprint': 'Production',
+        'Production': 'Monitoring',
+        'Monitoring': None,  # Estado final
+        'Cancelled': None,   # Estado final
+        'On Hold': 'Pending' # Vuelve a pending
+    }
+    return workflow.get(current_status)
+
+def format_currency(amount, currency='COP'):
+    """Formatear moneda (para futuras funcionalidades)"""
+    try:
+        if currency == 'COP':
+            return f"${float(amount):,.0f} COP"
+        elif currency == 'USD':
+            return f"${float(amount):,.2f} USD"
+        else:
+            return f"{float(amount):,.2f} {currency}"
+    except:
+        return "N/A"
