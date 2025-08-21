@@ -153,7 +153,7 @@ if not status_list:
     
     if not data.get("success"):
         send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
-        return
+        # return  # ← solo si querés dejarlo como recordatorio
     
     initiatives = data.get("data", [])
     
