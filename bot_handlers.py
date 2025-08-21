@@ -159,7 +159,8 @@ if not status_list:
     
     if not initiatives:
         send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{status}'**\n\n💡 Prueba con otro estado o escribe: estados")
-        return
+        # return  # ← si lo dejaste para debug
+
     
     # Emoji para cada estado
     status_emojis = {
