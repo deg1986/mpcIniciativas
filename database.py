@@ -1,4 +1,4 @@
-# 🗄️ database.py - Gestión de Datos v2.5
+# 🗄️ database.py - Gestión de Datos v2.6 - FIX FILTROS
 import requests
 import logging
 import time
@@ -7,7 +7,7 @@ from config import *
 logger = logging.getLogger(__name__)
 
 def get_cached_initiatives(limit=None, offset=None, status_filter=None):
-    """Obtener iniciativas con cache, paginación y filtros optimizado"""
+    """Obtener iniciativas con cache, paginación y filtros optimizado - FIX"""
     current_time = time.time()
     
     # Para requests con filtros específicos, no usar cache
@@ -30,17 +30,26 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
         if offset:
             params['offset'] = offset
             
-        # Filtro por status usando where clause de NocoDB
+        # FIX: Filtro por status usando sintaxis correcta de NocoDB
         if status_filter:
             if isinstance(status_filter, list):
-                # Para múltiples estados, usar operador IN
-                status_list = "','".join(status_filter)
-                params['where'] = f"(status,in,'{status_list}')"
+                # Para múltiples estados - SINTAXIS CORREGIDA
+                if len(status_filter) == 1:
+                    # Un solo estado
+                    params['where'] = f"(status,eq,{status_filter[0]})"
+                else:
+                    # Múltiples estados - usar OR
+                    conditions = " or ".join([f"(status,eq,{status})" for status in status_filter])
+                    params['where'] = f"({conditions})"
             else:
                 # Para un solo estado
                 params['where'] = f"(status,eq,{status_filter})"
         
+        logger.info(f"🔍 NocoDB Query: {url} with params: {params}")
+        
         response = requests.get(url, headers=headers, params=params, timeout=NOCODB_TIMEOUT)
+        
+        logger.info(f"📡 NocoDB Response: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
@@ -62,18 +71,19 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
                 "total": total_count,
                 "limit": params.get('limit'),
                 "offset": params.get('offset', 0),
-                "has_more": len(initiatives) == params.get('limit', DEFAULT_LIMIT)
+                "has_more": len(initiatives) == params.get('limit', DEFAULT_LIMIT),
+                "filter_applied": status_filter
             }
         else:
-            logger.error(f"❌ NocoDB HTTP {response.status_code}")
+            logger.error(f"❌ NocoDB HTTP {response.status_code}: {response.text}")
             # Fallback a cache solo para requests completos
             if use_cache and initiatives_cache["data"] is not None:
                 logger.info("⚠️ Using expired cache due to API error")
                 return {"success": True, "data": initiatives_cache["data"], "cached": True, "total": len(initiatives_cache["data"])}
-            return {"success": False, "error": f"HTTP {response.status_code}"}
+            return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
     except Exception as e:
         logger.error(f"❌ Error fetching initiatives: {e}")
-        # Fallback a cache solo para requests completos
+        # Fallback a cache expirado solo para requests completos
         if use_cache and initiatives_cache["data"] is not None:
             logger.info("⚠️ Using expired cache due to exception")
             return {"success": True, "data": initiatives_cache["data"], "cached": True, "total": len(initiatives_cache["data"])}
@@ -82,31 +92,6 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
 # Alias para compatibilidad - ahora soporta parámetros
 def get_initiatives(limit=None, offset=None, status_filter=None):
     return get_cached_initiatives(limit, offset, status_filter)
-
-def get_initiatives_by_status(status_list):
-    """Obtener iniciativas filtradas por estado(s)"""
-    if isinstance(status_list, str):
-        status_list = [status_list]
-    
-    # Validar estados
-    valid_statuses = [s for s in status_list if s in VALID_STATUSES]
-    
-    if not valid_statuses:
-        return {"success": False, "error": f"Estados inválidos. Válidos: {VALID_STATUSES}", "results": []}
-    
-    return get_cached_initiatives(status_filter=valid_statuses)
-
-def get_sprint_initiatives():
-    """Obtener iniciativas en sprint (desarrollo activo)"""
-    return get_initiatives_by_status(SPRINT_STATUSES)
-
-def get_production_initiatives():
-    """Obtener iniciativas en producción/monitoreo"""
-    return get_initiatives_by_status(PRODUCTION_STATUSES)
-
-def get_active_initiatives():
-    """Obtener todas las iniciativas activas"""
-    return get_initiatives_by_status(ACTIVE_STATUSES)
 
 def calculate_score_fast(initiative):
     """Calcular score RICE optimizado"""
@@ -135,6 +120,31 @@ def calculate_score_fast(initiative):
 def sort_initiatives_by_score(initiatives):
     """Ordenar iniciativas por score optimizado"""
     return sorted(initiatives, key=calculate_score_fast, reverse=True)
+
+def get_initiatives_by_status(status_list):
+    """Obtener iniciativas filtradas por estado(s)"""
+    if isinstance(status_list, str):
+        status_list = [status_list]
+    
+    # Validar estados
+    valid_statuses = [s for s in status_list if s in VALID_STATUSES]
+    
+    if not valid_statuses:
+        return {"success": False, "error": f"Estados inválidos. Válidos: {VALID_STATUSES}", "results": []}
+    
+    return get_cached_initiatives(status_filter=valid_statuses)
+
+def get_sprint_initiatives():
+    """Obtener iniciativas en sprint (desarrollo activo)"""
+    return get_initiatives_by_status(SPRINT_STATUSES)
+
+def get_production_initiatives():
+    """Obtener iniciativas en producción/monitoreo"""
+    return get_initiatives_by_status(PRODUCTION_STATUSES)
+
+def get_active_initiatives():
+    """Obtener todas las iniciativas activas"""
+    return get_initiatives_by_status(ACTIVE_STATUSES)
 
 def validate_initiative_data(data):
     """Validar datos de iniciativa optimizado"""
