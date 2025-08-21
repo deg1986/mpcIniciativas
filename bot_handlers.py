@@ -1,180 +1,7 @@
-def handle_sprint_initiatives(chat_id):
-    """Mostrar iniciativas en sprint (desarrollo)"""
-    logger.info(f"📱 Sprint initiatives from chat {chat_id}")
-    
-    send_telegram_message(chat_id, "⚡ **Cargando iniciativas en desarrollo...**")
-    
-    from database import get_sprint_initiatives
-    data = get_sprint_initiatives()
-    
-    if not data.get("success"):
-        send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
-        return
-    
-    initiatives = data.get("data", [])
-    
-    if not initiatives:
-        send_telegram_message(chat_id, "🔧 **No hay iniciativas en desarrollo actualmente.**\n\n💡 Las iniciativas en sprint son las que el equipo de tecnología está trabajando.")
-        return
-    
-    text = f"🔧 **INICIATIVAS EN DESARROLLO** ({len(initiatives)} activas)\n\n"
-    text += "⚡ **Equipo Tech trabajando en:**\n\n"
-    
-    for i, init in enumerate(initiatives[:MAX_RESULTS_LIST], 1):
-        formatted = format_initiative_summary_fast(init, i)
-        # Agregar info específica de sprint
-        status = init.get('status', 'In Sprint')
-        text += f"{formatted}\n🔧 Estado: {status}\n\n"
-    
-    if len(initiatives) > MAX_RESULTS_LIST:
-        text += f"📌 **{len(initiatives) - MAX_RESULTS_LIST} iniciativas más en desarrollo...**"
-    
-    text += f"\n💡 **Tip:** Estas son las iniciativas que están siendo desarrolladas por el equipo técnico."
-    
-    send_telegram_message(chat_id, text, parse_mode='Markdown')
-
-def handle_production_initiatives(chat_id):
-    """Mostrar iniciativas en producción/monitoreo"""
-    logger.info(f"📱 Production initiatives from chat {chat_id}")
-    
-    send_telegram_message(chat_id, "⚡ **Cargando iniciativas implementadas...**")
-    
-    from database import get_production_initiatives
-    data = get_production_initiatives()
-    
-    if not data.get("success"):
-        send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
-        return
-    
-    initiatives = data.get("data", [])
-    
-    if not initiatives:
-        send_telegram_message(chat_id, "🚀 **No hay iniciativas implementadas actualmente.**\n\n💡 Aquí aparecerán las iniciativas que ya están en producción o siendo monitoreadas.")
-        return
-    
-    # Separar por estado
-    production = [i for i in initiatives if i.get('status') == 'Production']
-    monitoring = [i for i in initiatives if i.get('status') == 'Monitoring']
-    
-    text = f"🚀 **INICIATIVAS IMPLEMENTADAS** ({len(initiatives)} totales)\n\n"
-    
-    if production:
-        text += f"✅ **EN PRODUCCIÓN** ({len(production)}):\n"
-        for i, init in enumerate(production[:5], 1):
-            formatted = format_initiative_summary_fast(init, i)
-            text += f"{formatted}\n🚀 Estado: Production\n\n"
-    
-    if monitoring:
-        text += f"📊 **EN MONITOREO** ({len(monitoring)}):\n"
-        for i, init in enumerate(monitoring[:5], 1):
-            formatted = format_initiative_summary_fast(init, i)
-            text += f"{formatted}\n📊 Estado: Monitoring\n\n"
-    
-    if len(initiatives) > 10:
-        text += f"📌 **{len(initiatives) - 10} iniciativas más implementadas...**\n"
-    
-    text += f"\n💡 **Tip:** Estas iniciativas ya están disponibles para usuarios o siendo monitoreadas."
-    
-    send_telegram_message(chat_id, text, parse_mode='Markdown')
-
-def handle_status_info(chat_id):
-    """Mostrar información sobre comandos de estado"""
-    text = """📊 **Comandos de Estado Disponibles** 
-
-**🔄 Filtros Rápidos:**
-• pending - Ver iniciativas pendientes
-• sprint - Ver las en desarrollo activo
-• production - Ver las implementadas
-• monitoring - Ver las en monitoreo
-• cancelled - Ver las canceladas
-• hold - Ver las pausadas
-
-**📈 Estados del Flujo:**
-⏳ Pending - Pendiente de iniciar
-🔧 Sprint - En desarrollo activo
-🚀 Production - Implementada y activa
-📊 Monitoring - En monitoreo post-implementación
-❌ Cancelled - Cancelada
-⏸️ Hold - Pausada temporalmente
-
-**📋 Flujo Típico:**
-Pending → Sprint → Production → Monitoring
-
-**💡 Ejemplos de uso:**
-• Escribe: pending
-• Escribe: sprint
-• Escribe: production
-
-**🔍 Para búsquedas específicas:**
-• buscar Product sprint - Buscar en equipo + estado
-• buscar API production - Buscar implementadas
-
-**Tip:** Solo escribe la palabra del estado, sin símbolos ni comillas."""
-    
-    send_telegram_message(chat_id, text, parse_mode='Markdown')
-
-def handle_filter_by_status(chat_id, status):
-    """Filtrar iniciativas por estado específico"""
-    logger.info(f"📱 Filter by status '{status}' from chat {chat_id}")
-
-    filter_key = status.lower()
-    status_list = STATUS_FILTERS.get(filter_key)
-
-    if not status_list:
-        send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
-
-**Comandos válidos:**
-• pending - Ver pendientes
-• sprint - Ver en desarrollo
-• production - Ver implementadas
-• monitoring - Ver en monitoreo
-• cancelled - Ver canceladas
-• hold - Ver pausadas
-
-**Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
-        return
-
-    send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
-
-    from database import get_initiatives_by_status
-    data = get_initiatives_by_status(status_list)
-
-    if not data.get("success"):
-        send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
-        return
-
-    initiatives = data.get("data", [])
-
-    if not initiatives:
-        send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{status}'**\n\n💡 Prueba con otro estado o escribe: estados")
-        return
-
-    status_emojis = {
-        'pending': '⏳',
-        'sprint': '🔧',
-        'production': '🚀',
-        'monitoring': '📊',
-        'cancelled': '❌',
-        'hold': '⏸️'
-    }
-
-    emoji = status_emojis.get(filter_key, '📋')
-    text = f"{emoji} **INICIATIVAS - {status.upper()}** ({len(initiatives)} encontradas)\n\n"
-
-    for i, init in enumerate(initiatives[:MAX_RESULTS_LIST], 1):
-        formatted = format_initiative_summary_fast(init, i)
-        text += f"{formatted}\n{emoji} Estado: {init.get('status', 'N/A')}\n\n"
-
-    if len(initiatives) > MAX_RESULTS_LIST:
-        text += f"📌 **{len(initiatives) - MAX_RESULTS_LIST} iniciativas más con este estado...**\n"
-
-    text += "\n💡 **Tip:** Escribe buscar para encontrar iniciativas específicas en este estado."
-
-    send_telegram_message(chat_id, text, parse_mode='Markdown')
-
+# 🤖 bot_handlers.py - Manejadores del Bot v2.6 - CORREGIDO
 import logging
 from flask import request
-from config import STATUS_FILTERS, MAX_RESULTS_LIST, MAX_RESULTS_SEARCH, MAX_INITIATIVE_NAME, MAX_DESCRIPTION, MAX_OWNER_NAME, MAX_KPI_LENGTH, VALID_TEAMS, VALID_PORTALS, GROQ_API_KEY, MAX_MESSAGE_LENGTH
+from config import *
 from database import get_initiatives, search_initiatives, create_initiative, calculate_score_fast
 from analytics import calculate_statistics_fast, format_statistics_text_fast, analyze_initiatives_with_llm_fast
 from utils import send_telegram_message
@@ -205,7 +32,7 @@ def setup_telegram_routes(app):
             
             text = message['text'].strip().lower()
             
-            # Router optimizado
+            # Router optimizado - CON ESTADOS REALES DE LA DB
             if text in ['/start', 'start', 'inicio', 'hola']:
                 handle_start_command(chat_id)
             elif text in ['/help', 'help', 'ayuda']:
@@ -221,19 +48,25 @@ def setup_telegram_routes(app):
                 if query:
                     handle_search_command_fast(chat_id, query)
                 else:
-                    send_telegram_message(chat_id, "🔍 **¿Qué quieres buscar?**\n\nEjemplos:\n• `buscar Product`\n• `buscar API`")
-            elif text in ['/sprint', 'sprint', 'desarrollo', 'dev']:
-                handle_sprint_initiatives(chat_id)
-            elif text in ['/production', 'production', 'produccion', 'prod']:
-                handle_production_initiatives(chat_id)
+                    send_telegram_message(chat_id, "🔍 **¿Qué quieres buscar?**\n\nEjemplos:\n• buscar Product\n• buscar API")
+            
+            # ESTADOS REALES DE LA DB
             elif text in ['/pending', 'pending', 'pendiente']:
                 handle_filter_by_status(chat_id, 'pending')
+            elif text in ['/reviewed', 'reviewed', 'revisadas']:
+                handle_filter_by_status(chat_id, 'reviewed')
+            elif text in ['/prioritized', 'prioritized', 'priorizadas']:
+                handle_filter_by_status(chat_id, 'prioritized')
+            elif text in ['/backlog', 'backlog']:
+                handle_filter_by_status(chat_id, 'backlog')
+            elif text in ['/sprint', 'sprint', 'desarrollo', 'dev']:
+                handle_filter_by_status(chat_id, 'sprint')
+            elif text in ['/production', 'production', 'produccion', 'prod']:
+                handle_filter_by_status(chat_id, 'production')
             elif text in ['/monitoring', 'monitoring', 'monitoreo']:
                 handle_filter_by_status(chat_id, 'monitoring')
-            elif text in ['/cancelled', 'cancelled', 'canceladas']:
-                handle_filter_by_status(chat_id, 'cancelled')
-            elif text in ['/hold', 'hold', 'pausa', 'pausadas']:
-                handle_filter_by_status(chat_id, 'hold')
+            elif text in ['/discarded', 'discarded', 'descartadas']:
+                handle_filter_by_status(chat_id, 'discarded')
             elif text in ['/estados', 'estados', 'status', 'comandos']:
                 handle_status_info(chat_id)
             else:
@@ -289,12 +122,14 @@ def handle_start_command(chat_id):
 • analizar - Análisis AI del portfolio
 
 **📊 Filtros por Estado:**
-• pending - Iniciativas pendientes
+• pending - Pendientes de revisión
+• reviewed - Revisadas
+• prioritized - Priorizadas
+• backlog - En backlog
 • sprint - En desarrollo activo
-• production - Implementadas y activas
+• production - Implementadas
 • monitoring - En monitoreo
-• cancelled - Canceladas
-• hold - Pausadas temporalmente
+• discarded - Descartadas
 
 **🔍 Ejemplos de búsqueda:**
 • buscar Product - Por equipo
@@ -302,8 +137,8 @@ def handle_start_command(chat_id):
 • buscar Juan - Por responsable
 
 **⚡ Nuevo en v2.6:**
-• Comandos simples sin símbolos raros
-• Filtros claros por estado
+• Comandos simples sin símbolos
+• Filtros por estados reales de la DB
 • API con paginación avanzada
 • Cache optimizado
 
@@ -313,31 +148,46 @@ def handle_start_command(chat_id):
 
 def handle_help_command(chat_id):
     """Comando help optimizado"""
-    text = """📚 **Comandos Disponibles** ⚡ v2.5
+    text = """📚 **Comandos Disponibles** ⚡ v2.6
 
-**🏃‍♂️ Comandos Rápidos:**
-• `iniciativas` - Lista completa por score RICE
-• `buscar <término>` - Búsqueda optimizada
-• `crear` - Nueva iniciativa (validaciones RICE)
-• `analizar` - Análisis AI estratégico
+**🏃‍♂️ Comandos Básicos:**
+• iniciativas - Lista completa por score RICE
+• buscar API - Búsqueda optimizada
+• crear - Nueva iniciativa con validaciones RICE
+• analizar - Análisis AI estratégico
 
-**🔍 Búsquedas:**
-• `buscar Product` - Por equipo
-• `buscar drogería` - Por descripción
-• `buscar API` - Por tecnología
+**📊 Filtros por Estado:**
+• pending - Pendientes de revisión
+• reviewed - Revisadas
+• prioritized - Priorizadas
+• backlog - En backlog
+• sprint - En desarrollo activo
+• production - Implementadas
+• monitoring - En monitoreo
+• discarded - Descartadas
 
-**🏆 Score RICE:**
-• 🔥 Score ≥ 2.0 (Alta prioridad)
-• ⭐ Score ≥ 1.0 (Media prioridad)
-• 📋 Score < 1.0 (Baja prioridad)
+**🔍 Ejemplos de Búsqueda:**
+• buscar Product - Por equipo
+• buscar drogería - Por descripción
+• buscar Juan - Por responsable
 
-**🏗️ Arquitectura Modular v2.5:**
-✅ Código organizado en módulos especializados
-✅ Fácil debug y mantenimiento
-✅ Performance optimizado
-✅ Cache inteligente de 5min
+**🏆 Sistema de Prioridad RICE:**
+• 🔥 Score mayor a 2.0 - Alta prioridad
+• ⭐ Score entre 1.0-2.0 - Media prioridad
+• 📋 Score menor a 1.0 - Baja prioridad
 
-🤖 **IA:** Análisis estratégico especializado en Saludia con insights priorizados por score RICE."""
+**🔄 Flujo de Estados:**
+Pending → Reviewed → Prioritized → Backlog → Sprint → Production → Monitoring
+
+**🏗️ Arquitectura Modular v2.6:**
+✅ Comandos simplificados sin símbolos
+✅ Gestión completa de estados de iniciativas
+✅ Cache inteligente optimizado
+✅ API con paginación
+
+🤖 **IA Especializada:** Análisis estratégico con insights priorizados por score RICE y seguimiento de estados.
+
+💡 **Tip:** Solo escribe la palabra, ejemplo: pending o sprint"""
     
     send_telegram_message(chat_id, text, parse_mode='Markdown')
 
@@ -373,7 +223,7 @@ def handle_list_initiatives_fast(chat_id):
         text += f"{formatted}\n\n"
     
     if len(sorted_initiatives) > MAX_RESULTS_LIST:
-        text += f"📌 **{len(sorted_initiatives) - MAX_RESULTS_LIST} iniciativas más...**\nUsa `buscar` para encontrar específicas."
+        text += f"📌 **{len(sorted_initiatives) - MAX_RESULTS_LIST} iniciativas más...**\nUsa buscar para encontrar específicas."
     
     cache_info = " (Cache)" if data.get("cached") else " (Fresh)"
     text += f"\n💡 **Tip:** Datos actualizados{cache_info}"
@@ -397,9 +247,9 @@ def handle_search_command_fast(chat_id, query):
         send_telegram_message(chat_id, f"""🔍 **Sin resultados:** "{query}"
 
 💡 **Sugerencias:**
-• `buscar Product` - Por equipo
-• `buscar API` - Por tecnología
-• `iniciativas` - Ver todas""")
+• buscar Product - Por equipo
+• buscar API - Por tecnología
+• iniciativas - Ver todas""")
         return
     
     text = f"🔍 **RESULTADOS:** {query} ({total} encontrados)\n\n"
@@ -467,6 +317,110 @@ def handle_analyze_command_fast(chat_id):
             send_telegram_message(chat_id, analysis_text, parse_mode='Markdown')
     else:
         send_telegram_message(chat_id, "⚠️ Análisis AI no disponible.")
+
+def handle_status_info(chat_id):
+    """Mostrar información sobre comandos de estado"""
+    text = """📊 **Comandos de Estado Disponibles** 
+
+**🔄 Filtros Rápidos:**
+• pending - Ver pendientes de revisión
+• reviewed - Ver revisadas
+• prioritized - Ver priorizadas
+• backlog - Ver en backlog
+• sprint - Ver en desarrollo activo
+• production - Ver implementadas
+• monitoring - Ver en monitoreo
+• discarded - Ver descartadas
+
+**📈 Estados del Flujo:**
+⏳ Pending - Pendiente de revisión
+👁️ Reviewed - Revisada
+⭐ Prioritized - Priorizada
+📝 Backlog - En backlog
+🔧 Sprint - En desarrollo activo
+🚀 Production - Implementada y activa
+📊 Monitoring - En monitoreo post-implementación
+❌ Discarded - Descartada
+
+**📋 Flujo Típico:**
+Pending → Reviewed → Prioritized → Backlog → Sprint → Production → Monitoring
+
+**💡 Ejemplos de uso:**
+• Escribe: pending
+• Escribe: sprint
+• Escribe: production
+
+**🔍 Para búsquedas específicas:**
+• buscar Product sprint - Buscar en equipo + estado
+• buscar API production - Buscar implementadas
+
+**Tip:** Solo escribe la palabra del estado, sin símbolos ni comillas."""
+    
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
+
+def handle_filter_by_status(chat_id, status):
+    """Filtrar iniciativas por estado específico - SIMPLIFICADO"""
+    logger.info(f"📱 Filter by status '{status}' from chat {chat_id}")
+    
+    filter_key = status.lower()
+    status_list = STATUS_FILTERS.get(filter_key)
+    
+    if not status_list:
+        send_telegram_message(chat_id, f"""❌ **Estado inválido:** {status}
+
+**Comandos válidos:**
+• pending - Ver pendientes
+• reviewed - Ver revisadas
+• prioritized - Ver priorizadas
+• backlog - Ver en backlog
+• sprint - Ver en desarrollo
+• production - Ver implementadas
+• monitoring - Ver en monitoreo
+• discarded - Ver descartadas
+
+**Ejemplo:** Escribe solo: pending""", parse_mode='Markdown')
+        return
+    
+    send_telegram_message(chat_id, f"⚡ **Filtrando por: {status}...**")
+    
+    from database import get_initiatives_by_status
+    data = get_initiatives_by_status(status_list)
+    
+    if not data.get("success"):
+        send_telegram_message(chat_id, f"❌ Error: {data.get('error', 'Desconocido')}")
+        return
+    
+    initiatives = data.get("data", [])
+    
+    if not initiatives:
+        send_telegram_message(chat_id, f"📭 **No hay iniciativas con estado '{status}'**\n\n💡 Prueba con otro estado o escribe: estados")
+        return
+    
+    # Emoji para cada estado
+    status_emojis = {
+        'pending': '⏳',
+        'reviewed': '👁️',
+        'prioritized': '⭐',
+        'backlog': '📝',
+        'sprint': '🔧',
+        'production': '🚀',
+        'monitoring': '📊',
+        'discarded': '❌'
+    }
+    
+    emoji = status_emojis.get(filter_key, '📋')
+    text = f"{emoji} **INICIATIVAS - {status.upper()}** ({len(initiatives)} encontradas)\n\n"
+    
+    for i, init in enumerate(initiatives[:MAX_RESULTS_LIST], 1):
+        formatted = format_initiative_summary_fast(init, i)
+        text += f"{formatted}\n{emoji} Estado: {init.get('status', 'N/A')}\n\n"
+    
+    if len(initiatives) > MAX_RESULTS_LIST:
+        text += f"📌 **{len(initiatives) - MAX_RESULTS_LIST} iniciativas más con este estado...**\n"
+    
+    text += "\n💡 **Tip:** Escribe buscar para encontrar iniciativas específicas en este estado."
+    
+    send_telegram_message(chat_id, text, parse_mode='Markdown')
 
 def format_initiative_summary_fast(initiative, index=None):
     """Formatear iniciativa optimizado"""
@@ -582,7 +536,7 @@ Describe la iniciativa (máximo {MAX_DESCRIPTION} caracteres).
 
 **Ejemplos:** Conversion Rate, GMV, User Retention
 
-💡 Escribe `ninguno` si no tienes KPI específico.""", parse_mode='Markdown')
+💡 Escribe ninguno si no tienes KPI específico.""", parse_mode='Markdown')
         
         elif step == 'kpi':
             if text.strip().lower() not in ['ninguno', 'no', 'n/a', '']:
@@ -613,25 +567,6 @@ Envía número entre 0-100.
 **Opciones:** 1 (bajo), 2 (medio), 3 (alto)""", parse_mode='Markdown')
                 
             except ValueError:
-                send_telegram_message(chat_id, "❌ Número válido entre 0-100.")
-                return
-        
-        elif step == 'impact':
-            try:
-                impact = int(text.strip())
-                if impact not in [1, 2, 3]:
-                    send_telegram_message(chat_id, "❌ Debe ser 1, 2 o 3.")
-                    return
-                
-                state['data']['impact'] = impact
-                state['step'] = 'confidence'
-                send_telegram_message(chat_id, """🎯 **CONFIDENCE:** ¿% de confianza en el impacto?
-
-Número entre 0-100.
-
-**Ejemplos:** 90, 70, 50""", parse_mode='Markdown')
-                
-            except ValueError:
                 send_telegram_message(chat_id, "❌ Número válido: 1, 2 o 3.")
                 return
         
@@ -648,7 +583,7 @@ Número entre 0-100.
 
 **Ejemplos:** 1, 2.5, 0.5
 
-💡 Escribe `default` para 1 sprint.""", parse_mode='Markdown')
+💡 Escribe default para 1 sprint.""", parse_mode='Markdown')
                 
             except ValueError:
                 send_telegram_message(chat_id, "❌ Número válido entre 0-100.")
@@ -695,7 +630,7 @@ Número entre 0-100.
 
 🏆 **Prioridad:** {priority_text} ({priority_emoji})
 
-💡 **Siguiente:** `buscar {data['initiative_name'][:20]}`"""
+💡 **Siguiente:** buscar {data['initiative_name'][:20]}"""
                 
                 send_telegram_message(chat_id, confirmation, parse_mode='Markdown')
             else:
@@ -711,3 +646,22 @@ Número entre 0-100.
         send_telegram_message(chat_id, "❌ Error procesando mensaje.")
         if user_id in user_states:
             del user_states[user_id]
+                send_telegram_message(chat_id, "❌ Número válido entre 0-100.")
+                return
+        
+        elif step == 'impact':
+            try:
+                impact = int(text.strip())
+                if impact not in [1, 2, 3]:
+                    send_telegram_message(chat_id, "❌ Debe ser 1, 2 o 3.")
+                    return
+                
+                state['data']['impact'] = impact
+                state['step'] = 'confidence'
+                send_telegram_message(chat_id, """🎯 **CONFIDENCE:** ¿% de confianza en el impacto?
+
+Número entre 0-100.
+
+**Ejemplos:** 90, 70, 50""", parse_mode='Markdown')
+                
+            except ValueError:
