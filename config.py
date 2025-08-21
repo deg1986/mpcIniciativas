@@ -25,10 +25,10 @@ initiatives_cache = {
 VALID_TEAMS = ['Product', 'Sales', 'Ops', 'CS', 'Controlling', 'Growth']
 VALID_PORTALS = ['Seller', 'Droguista', 'Admin']
 
-# ===== ESTADOS DE INICIATIVAS =====
-VALID_STATUSES = ['Pending', 'In Sprint', 'Production', 'Monitoring', 'Cancelled', 'On Hold']
-ACTIVE_STATUSES = ['Pending', 'In Sprint', 'Production', 'Monitoring']
-SPRINT_STATUSES = ['In Sprint']
+# ===== ESTADOS DE INICIATIVAS - REALES DE LA DB =====
+VALID_STATUSES = ['Pending', 'Reviewed', 'Prioritized', 'Backlog', 'Sprint', 'Production', 'Monitoring', 'Discarded']
+ACTIVE_STATUSES = ['Pending', 'Reviewed', 'Prioritized', 'Backlog', 'Sprint', 'Production', 'Monitoring']
+SPRINT_STATUSES = ['Sprint']
 PRODUCTION_STATUSES = ['Production', 'Monitoring']
 
 # ===== CONFIGURACIÓN PAGINACIÓN =====
@@ -58,12 +58,15 @@ MAX_DESCRIPTION = 1000
 MAX_OWNER_NAME = 100
 MAX_KPI_LENGTH = 255
 
-# ===== FILTROS PREDEFINIDOS =====
+# ===== FILTROS PREDEFINIDOS - SEGÚN DB REAL =====
 STATUS_FILTERS = {
+    'active': ACTIVE_STATUSES,
     'pending': ['Pending'],
+    'reviewed': ['Reviewed'],
+    'prioritized': ['Prioritized'],
+    'backlog': ['Backlog'],
     'sprint': ['Sprint'],
     'production': ['Production'],
     'monitoring': ['Monitoring'],
-    'cancelled': ['Discarded'],
-    'hold': ['Backlog']
+    'discarded': ['Discarded']
 }
