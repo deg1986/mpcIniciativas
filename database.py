@@ -2,37 +2,35 @@
 import requests
 import logging
 import time
-import signal
-from functools import wraps
 from config import *
 
 logger = logging.getLogger(__name__)
 
-class TimeoutError(Exception):
-    """Custom timeout exception"""
-    pass
-
-def timeout_handler(signum, frame):
-    """Handler for timeout signal"""
-    raise TimeoutError("Operation timed out")
-
-def with_timeout(seconds=15):
-    """Decorator to add timeout to functions"""
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            # Set the signal handler
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(seconds)
+def safe_get_value(obj, key, default=None, value_type=str):
+    """Safely get value from object with type conversion"""
+    try:
+        if not obj or not isinstance(obj, dict):
+            return default
+        
+        value = obj.get(key, default)
+        if value is None:
+            return default
             
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except Exception as e:
+        if value_type == str:
+            return str(value).strip() if str(value).strip() else default
+        elif value_type == float:
+            return float(value) if value != '' else (default if default is not None else 0.0)
+        elif value_type == int:
+            return int(value) if value != '' else (default if default is not None else 0)
+        elif value_type == bool:
+            return bool(value) if isinstance(value, bool) else str(value).lower() in ['true', '1', 'yes']
+        else:
+            return value
+            
+    except Exception as e:
         logger.warning(f"Error getting {key}: {e}")
         return default
 
-@with_timeout(NOCODB_TIMEOUT)
 def get_cached_initiatives(limit=None, offset=None, status_filter=None):
     """Obtener iniciativas con cache, paginación y filtros optimizado - FIXED VERSION"""
     current_time = time.time()
@@ -80,7 +78,7 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
         logger.info(f"🔍 NocoDB Query: {url} with params: {params}")
         
         # REQUEST WITH SHORTER TIMEOUT TO AVOID HANGING
-        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response = requests.get(url, headers=headers, params=params, timeout=NOCODB_TIMEOUT)
         
         logger.info(f"📡 NocoDB Response: {response.status_code}")
         
@@ -156,13 +154,6 @@ def get_cached_initiatives(limit=None, offset=None, status_filter=None):
             return {"success": True, "data": initiatives_cache["data"], "cached": True, "total": len(initiatives_cache["data"])}
         return {"success": False, "error": "Request timeout"}
         
-    except TimeoutError:
-        logger.error("❌ NocoDB operation timeout")
-        if use_cache and initiatives_cache["data"] is not None:
-            logger.info("⚠️ Using expired cache due to operation timeout")
-            return {"success": True, "data": initiatives_cache["data"], "cached": True, "total": len(initiatives_cache["data"])}
-        return {"success": False, "error": "Operation timeout"}
-        
     except Exception as e:
         logger.error(f"❌ Error fetching initiatives: {e}")
         # Fallback a cache expirado solo para requests completos
@@ -231,7 +222,6 @@ def sort_initiatives_by_score(initiatives):
         logger.error(f"❌ Error sorting initiatives: {e}")
         return initiatives if initiatives else []
 
-@with_timeout(NOCODB_TIMEOUT)
 def get_initiatives_by_status(status_list):
     """Obtener iniciativas filtradas por estado(s) con timeout"""
     try:
@@ -332,7 +322,6 @@ def validate_initiative_data(data):
         logger.error(f"❌ Validation error: {e}")
         return {"valid": False, "errors": [f"Error de validación: {str(e)}"]}
 
-@with_timeout(NOCODB_TIMEOUT)
 def create_initiative(data):
     """Crear iniciativa optimizada con timeout"""
     try:
@@ -372,7 +361,7 @@ def create_initiative(data):
         }
         
         # Request with timeout
-        response = requests.post(url, headers=headers, json=nocodb_data, timeout=10)
+        response = requests.post(url, headers=headers, json=nocodb_data, timeout=NOCODB_TIMEOUT)
         
         if response.status_code in [200, 201]:
             # Invalidar cache
@@ -386,10 +375,6 @@ def create_initiative(data):
     except requests.exceptions.Timeout:
         logger.error("❌ Create initiative timeout")
         return {"success": False, "error": "Request timeout"}
-        
-    except TimeoutError:
-        logger.error("❌ Create initiative operation timeout")
-        return {"success": False, "error": "Operation timeout"}
         
     except Exception as e:
         logger.error(f"❌ Error creating initiative: {e}")
@@ -512,36 +497,4 @@ def refresh_cache():
         return {"success": data.get("success", False), "total": len(data.get("data", []))}
     except Exception as e:
         logger.error(f"❌ Error refreshing cache: {e}")
-        return {"success": False, "error": str(e)} TimeoutError:
-                logger.error(f"❌ {func.__name__} timed out after {seconds}s")
-                return {"success": False, "error": f"Timeout after {seconds}s"}
-            finally:
-                # Reset the alarm
-                signal.alarm(0)
-                signal.signal(signal.SIGALRM, old_handler)
-                
-        return wrapper
-    return decorator
-
-def safe_get_value(obj, key, default=None, value_type=str):
-    """Safely get value from object with type conversion"""
-    try:
-        if not obj or not isinstance(obj, dict):
-            return default
-        
-        value = obj.get(key, default)
-        if value is None:
-            return default
-            
-        if value_type == str:
-            return str(value).strip() if str(value).strip() else default
-        elif value_type == float:
-            return float(value) if value != '' else (default if default is not None else 0.0)
-        elif value_type == int:
-            return int(value) if value != '' else (default if default is not None else 0)
-        elif value_type == bool:
-            return bool(value) if isinstance(value, bool) else str(value).lower() in ['true', '1', 'yes']
-        else:
-            return value
-            
-    except
+        return {"success": False, "error": str(e)}
